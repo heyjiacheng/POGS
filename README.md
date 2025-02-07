@@ -8,8 +8,11 @@
 <!-- [[Arxiv]](https://arxiv.org/abs/2409.18108) -->
 
 <!-- insert figure -->
-![POGS Teaser](media/POGS_teaser.gif)
-![POGS Servoing](media/POGS_servoing.gif)
+<!-- ![POGS Teaser](media/POGS_teaser.gif) -->
+<img src="media/POGS_teaser.gif" width="650"/>
+<img src="media/POGS_servoing.gif" width="650"/>
+
+<!-- ![POGS Servoing](media/POGS_servoing.gif) -->
 </div>
 
 This repository contains the official implementation for [POGS](https://berkeleyautomation.github.io/POGS/).
