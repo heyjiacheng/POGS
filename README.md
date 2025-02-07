@@ -10,9 +10,9 @@
 <!-- insert figure -->
 <!-- ![POGS Teaser](media/POGS_teaser.gif) -->
 <img src="media/POGS_teaser.gif" width="650"/>
-<br>
+<div style="height: 50px;">&nbsp;</div>
 <img src="media/POGS_servoing.gif" width="650"/>
-<br>
+<div style="height: 50px;">&nbsp;</div>
 
 <!-- ![POGS Servoing](media/POGS_servoing.gif) -->
 </div>
