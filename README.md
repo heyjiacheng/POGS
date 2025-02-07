@@ -1,8 +1,6 @@
 # POGS 
 ## (Persistent Object Gaussian Splat for Tracking Human and Robot Manipulation of Irregularly Shaped Objects)
 
-This is the official implementation for [POGS](https://berkeleyautomation.github.io/POGS/).
-
 <div align="center">
 
 [[Website]](https://berkeleyautomation.github.io/POGS/)
@@ -10,9 +8,11 @@ This is the official implementation for [POGS](https://berkeleyautomation.github
 <!-- [[Arxiv]](https://arxiv.org/abs/2409.18108) -->
 
 <!-- insert figure -->
-[![POGS Teaser](media/POGS_teaser.gif)]
+![POGS Teaser](media/POGS_teaser.gif)
 
 </div>
+
+This repository contains the official implementation for [POGS](https://berkeleyautomation.github.io/POGS/).
 
 Tested on Python 3.10, cuda 11.8, using conda. 
 
