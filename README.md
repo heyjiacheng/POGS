@@ -1,5 +1,5 @@
 # POGS 
-## (Persistent Object Gaussian Splat for Tracking Human and Robot Manipulation of Irregularly Shaped Objects)
+## Persistent Object Gaussian Splat for Tracking Human and Robot Manipulation of Irregularly Shaped Objects
 
 <div align="center">
 
@@ -9,7 +9,7 @@
 
 <!-- insert figure -->
 ![POGS Teaser](media/POGS_teaser.gif)
-
+![POGS Servoing](media/POGS_servoing.gif)
 </div>
 
 This repository contains the official implementation for [POGS](https://berkeleyautomation.github.io/POGS/).
@@ -24,6 +24,7 @@ conda activate pogs
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+pip install warp-lang
 ```
 
 2. [`cuml`](https://docs.rapids.ai/install) is required (for global clustering).

@@ -38,3 +38,5 @@ pogs/ur5_interface/ur5_interface/scripts/results/*
 data/*
 media/POGS.mp4
 outputs/*
+pogs/tracking/models/
+*.mp4
