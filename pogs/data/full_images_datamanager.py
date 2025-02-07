@@ -79,11 +79,9 @@ class FullImageDatamanagerConfig(DataManagerConfig):
     """The downscale factor for the clip pyramid"""
     num_random_masks: int = 15
     """Number of random masks to sample for contrastive loss"""
-    use_denoiser: bool = False
-    """Whether to use the denoiser for the dino encoder"""
-    lerf_step: int = 8000
+    lerf_step: int = 2500
     """The step at which to begin supervising clip and groups"""
-    dino_step: int = 7500
+    dino_step: int = 100
     """The step at which to begin supervising dino"""
 
 class FullImageDatamanager(DataManager, Generic[TDataset]):
@@ -150,17 +148,13 @@ class FullImageDatamanager(DataManager, Generic[TDataset]):
         cache_dir = f"outputs/{self.config.dataparser.data.name}"
         clip_cache_path = Path(osp.join(cache_dir, f"clip_{self.image_encoder.name}"))
         detic_cache_path = Path(osp.join(cache_dir, "detic.npy"))
-        if self.config.use_denoiser:
-            dino_cache_path = Path(osp.join(cache_dir, "denoised_dino.npy"))
-        else:
-            dino_cache_path = Path(osp.join(cache_dir, "dino.npy"))
+        dino_cache_path = Path(osp.join(cache_dir, "dino.npy"))
             
         self.dino_dataloader = DinoDataloader(
             image_list = images,
             device = self.device,
             cfg={"image_shape": list(images.shape[2:4])},
             cache_path=dino_cache_path,
-            use_denoiser=self.config.use_denoiser,
         )
         torch.cuda.empty_cache()
         self.clip_interpolator = PyramidEmbeddingDataloader(

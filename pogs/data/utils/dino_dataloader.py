@@ -7,90 +7,20 @@ from tqdm import tqdm
 from torchvision import transforms
 from typing import Tuple
 import numpy as np
-from PIL import Image
-import os
-import sys
 
-def get_img_resolution(H, W, max_size = 1050, p = None, downsample = None):
-    if downsample:
-            if p is not None:
-                new_H = ((H//downsample)//p)*p
-                new_W = ((W//downsample)//p)*p
-            else:
-                new_H = H//downsample
-                new_W = W//downsample
-    elif H<W:
-        new_W = max_size
-        new_H = (int((H/W)*max_size)//p)*p
+#usually 1260 max size, 1050 for vit-L with ROI
+MAX_DINO_SIZE = 1260
+def get_img_resolution(H, W, p=14):
+    if H<W:
+        new_W = MAX_DINO_SIZE
+        new_H = (int((H/W)*MAX_DINO_SIZE)//p)*p
     else:
-        new_H = max_size
-        new_W = (int((W/H)*max_size)//p)*p
+        new_H = MAX_DINO_SIZE
+        new_W = (int((W/H)*MAX_DINO_SIZE)//p)*p
     return new_H, new_W
 
-class DinoV2DataLoader(FeatureDataloader):
-    model_type = "dinov2_vits14"
-
-    def __init__(
-            self,
-            cfg: dict,
-            device: torch.device,
-            image_list: torch.Tensor,
-            cache_path: str = None,
-            pca_dim = 128
-    ):
-        assert "image_shape" in cfg
-        self.model = torch.hub.load('facebookresearch/dinov2', self.model_type).cuda()
-        super().__init__(cfg, device, image_list, cache_path)
-        self.pca_dim = pca_dim
-        data_shape = self.data.shape
-        if self.pca_dim != self.data.shape[-1]:
-            self.pca_matrix = torch.pca_lowrank(self.data.view(-1, data_shape[-1]), q=self.pca_dim)[2]
-            self.data = torch.matmul(self.data.view(-1, data_shape[-1]), self.pca_matrix).reshape((*data_shape[:-1], self.pca_dim))
-        print("Dino data shape", self.data.shape)
-
-    def create(self, image_list):
-        self.data = self.get_dino_feats(image_list)
-
-    def get_pca_feats(self,image_list):
-        feats = self.get_dino_feats(image_list)
-        data_shape = feats.shape
-        pca_feats = torch.matmul(feats.view(-1, data_shape[-1]), self.pca_matrix.to(feats)).reshape((*data_shape[:-1], self.pca_dim))
-        return pca_feats
-
-    def get_dino_feats(self, image_list):
-        """
-        image_list: BxCxHxW torch tensor
-        returns: BxHxWxC torch tensor of features
-        """
-        h,w = get_img_resolution(image_list.shape[2], image_list.shape[3], p=14)
-        preprocess = transforms.Compose([
-                        transforms.Resize((h,w),antialias=True, interpolation=transforms.InterpolationMode.BICUBIC),
-                        transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-                    ])
-        preproc_image_lst = preprocess(image_list).to(self.device)
-        dino_embeds = []
-        for image in tqdm(preproc_image_lst, desc="dino", total=len(image_list), leave=False):
-            with torch.no_grad():
-                descriptors = self.model.get_intermediate_layers(image.unsqueeze(0),reshape=True)[0].squeeze().permute(1,2,0)
-            dino_embeds.append(descriptors.cpu().detach())
-
-        return torch.stack(dino_embeds, dim=0)
-    def __call__(self, img_points):
-        # img_points: (B, 3) # (img_ind, x, y)
-        img_scale = (
-            self.data.shape[1] / self.cfg["image_shape"][0],
-            self.data.shape[2] / self.cfg["image_shape"][1],
-        )
-        x_ind, y_ind = (img_points[:, 1] * img_scale[0]).long(), (img_points[:, 2] * img_scale[1]).long()
-        return (self.data[img_points[:, 0].long(), x_ind, y_ind]).to(self.device)
-
-    def get_full_img_feats(self, img_ind) -> torch.Tensor:
-        """
-        returns BxHxWxC
-        """
-        return self.data[img_ind].to(self.device)
-
 class DinoDataloader(FeatureDataloader):
+    dino_model_type = "dinov2_vitb14"
     dino_stride = 14
     dino_layer = 11
     dino_facet = "key"
@@ -103,102 +33,37 @@ class DinoDataloader(FeatureDataloader):
         image_list: torch.Tensor,
         cache_path: str = None,
         pca_dim: int = 64,
-        use_denoiser: bool = True,
-        dino_model_type = "dinov2_vits14",
     ):
-        self.dino_model_type = dino_model_type
         assert "image_shape" in cfg
         self.extractor = ViTExtractor(self.dino_model_type, self.dino_stride)
-        self.use_denoiser = use_denoiser
         self.device = device
-        if self.use_denoiser:
-            #arg
-            vit_type = "vit_base_patch14_dinov2.lvd142m"
-            vit_stride = self.dino_stride
-            noise_map_height = 37
-            noise_map_width = 37
-            enable_pe = False
-            load_denoiser_from = parent_dir_path + '/DVT/dinov2_v1.pth'
-
-            
-            #load denoiser model
-            vit = DenoisingViT.ViTWrapper(
-            model_type=vit_type,
-                stride=vit_stride,)
-            vit = vit.to(self.device)
-            self.denoise_model = DenoisingViT.Denoiser(
-                noise_map_height=noise_map_height,
-                noise_map_width=noise_map_width,
-                feature_dim=vit.n_output_dims,
-                vit=vit,
-                enable_pe=enable_pe,
-            ).to(self.device)
-            if load_denoiser_from is not None:
-                freevit_model_ckpt = torch.load(load_denoiser_from)["denoiser"]
-                #modify the key to remove the trailing .0
-                freevit_model_ckpt = {key.replace('.0', '') if '.0' in key else key: value for key, value in freevit_model_ckpt.items()}
-                msg = self.denoise_model.load_state_dict(freevit_model_ckpt, strict=False)
-            for k in self.denoise_model.state_dict().keys():
-                if k in freevit_model_ckpt:
-                    print(k, "loaded")
-            for p in self.denoise_model.parameters():
-                p.requires_grad = False
-            self.denoise_model.eval()
-            self.denoise_model.to(device)
         self.pca_dim = pca_dim
         super().__init__(cfg, device, image_list, cache_path)
         print("Dino data shape", self.data.shape)
         
+        
+           
     def create(self, image_list):
         self.data = self.get_dino_feats(image_list)
         data_shape = self.data.shape
-        print(data_shape)
         if self.pca_dim != self.data.shape[-1]:
             self.pca_matrix = torch.pca_lowrank(self.data.view(-1, data_shape[-1]), q=self.pca_dim,niter=20)[2]
             self.data = torch.matmul(self.data.view(-1, data_shape[-1]), self.pca_matrix).reshape((*data_shape[:-1], self.pca_dim))
         else:
             self.pca_matrix = torch.eye(data_shape[-1])
-    
-    def gen_pca_mat(self, image_list_path):
-        transform = transforms.Compose([
-            transforms.ToTensor()
-        ])
-        image_files = [f for f in os.listdir(image_list_path) if f.endswith('.png')]
-        image_tensors = []
-        for image_file in image_files:
-            image_path = os.path.join(image_list_path, image_file)
-            image = Image.open(image_path).convert('RGB')  # Ensure 3 color channels
-            image_tensor = transform(image)
-            image_tensors.append(image_tensor)
 
-        # Stack all tensors into a single batched tensor
-        batched_tensor = torch.stack(image_tensors)
-        self.data = self.get_dino_feats(batched_tensor)
-        # self.extractor.model.norm.normalized_shape[0]
-        data_shape = self.data.shape
-        if self.pca_dim != self.data.shape[-1]:
-            self.pca_matrix = torch.pca_lowrank(self.data.view(-1, data_shape[-1]), q=self.pca_dim,niter=20)[2]
-        else:
-            self.pca_matrix = torch.eye(data_shape[-1])
-            
     def load(self):
         super().load()
-        if self.use_denoiser:
-            cache_pca_path = self.cache_path.parent / ("denoised_pca.npy")
-        else:    
-            cache_pca_path = self.cache_path.parent / ("pca.npy")
+        cache_pca_path = self.cache_path.parent / ("pca.npy")
         self.pca_matrix = torch.from_numpy(np.load(cache_pca_path)).to(self.device)
 
     def save(self):
         super().save()
-        if self.use_denoiser:
-            cache_pca_path = self.cache_path.parent / ("denoised_pca.npy")
-        else:
-            cache_pca_path = self.cache_path.parent / ("pca.npy")
+        cache_pca_path = self.cache_path.parent / ("pca.npy")
         np.save(cache_pca_path, self.pca_matrix.cpu().numpy())
 
     def get_dino_feats(self,image_list, keep_cuda=False):
-        h,w = get_img_resolution(image_list.shape[2], image_list.shape[3], p=14)
+        h,w = get_img_resolution(image_list.shape[2], image_list.shape[3])
         preprocess = transforms.Compose([
                         transforms.Resize((h,w),antialias=True, interpolation=transforms.InterpolationMode.BICUBIC),
                         transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
@@ -206,38 +71,19 @@ class DinoDataloader(FeatureDataloader):
         preproc_image_lst = preprocess(image_list).to(self.device)
         dino_embeds = []
 
-        # for image in tqdm(preproc_image_lst, desc="dino", total=len(image_list), leave=False):
-        for image in preproc_image_lst:
+        for image in tqdm(preproc_image_lst, desc="dino", total=len(image_list), leave=False):
             with torch.no_grad():
-                # DVT
-                if self.use_denoiser:
-                    # denoiser
-                    image=image.unsqueeze(0)
-                    output_dict = self.denoise_model(image.to(self.device), return_dict=True)
-                    denoised_features = output_dict["pred_denoised_feats"].squeeze(0)
-                    denoised_features/=10
-                    if keep_cuda:
-                        dino_embeds.append(denoised_features)
-                    else:
-                        dino_embeds.append(denoised_features.cpu().detach())
-                    
+                descriptors = self.extractor.model.get_intermediate_layers(image.unsqueeze(0),reshape=True)[0].squeeze().permute(1,2,0)/10
+                if keep_cuda:
+                    dino_embeds.append(descriptors)
                 else:
-                    descriptors = self.extractor.model.get_intermediate_layers(image.unsqueeze(0),reshape=True)[0].squeeze().permute(1,2,0)/10
-                    # descriptors = self.extractor.extract_descriptors(
-                    #     image.unsqueeze(0),
-                    #     [self.dino_layer],
-                    #     self.dino_facet,
-                    #     self.dino_bin, 
-                    #     )             
-                    # descriptors = descriptors.reshape(self.extractor.num_patches[0], self.extractor.num_patches[1], -1)
-                    if keep_cuda:
-                        dino_embeds.append(descriptors)
-                    else:
-                        dino_embeds.append(descriptors.cpu().detach())
+                    dino_embeds.append(descriptors.cpu().detach())
+                
+         
                 
         return torch.stack(dino_embeds, dim=0)
     
-    def get_pca_feats(self,image_list, keep_cuda = True):
+    def get_pca_feats(self,image_list, keep_cuda = False):
         feats = self.get_dino_feats(image_list, keep_cuda=keep_cuda)
         data_shape = feats.shape
         pca_feats = torch.matmul(feats.view(-1, data_shape[-1]), self.pca_matrix.to(feats)).reshape((*data_shape[:-1], self.pca_dim))
@@ -257,23 +103,3 @@ class DinoDataloader(FeatureDataloader):
         returns BxHxWxC
         """
         return self.data[img_ind].to(self.device)
-
-    def generate_dino_embed(self, image):
-        C, H, W = image.shape
-        extractor = ViTExtractor(self.dino_model_type, self.dino_stride)
-        print(self.dino_load_size)
-        preproc_image = extractor.preprocess(image, self.dino_load_size)[0].to(self.device)
-        # start = time.time()
-        with torch.no_grad():
-            descriptors = extractor.extract_descriptors(
-                preproc_image.unsqueeze(0),
-                [self.dino_layer],
-                self.dino_facet,
-                self.dino_bin,
-            )
-        dino_embeds = []
-        descriptors = descriptors.reshape(extractor.num_patches[0], extractor.num_patches[1], -1)
-        # print(f"DinoEmbeddingProcess took {time.time()-start} seconds")
-        dino_embeds.append(descriptors.cpu().detach())
-        self.data = torch.stack(dino_embeds, dim=0)
-        return descriptors.cpu().detach()

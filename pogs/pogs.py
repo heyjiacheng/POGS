@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Type, Union
+from typing import Dict, List, Type, Union
 
 import numpy as np
 import torch
@@ -31,19 +31,15 @@ try:
     from gsplat.strategy import DefaultStrategy
 except ImportError:
     print("Please install gsplat>=1.0.0")
-from nerfstudio.models.splatfacto import RGB2SH, SH2RGB, num_sh_bases
-from pytorch_msssim import SSIM
+from nerfstudio.models.splatfacto import RGB2SH
 from torch.nn import Parameter
 import torch.nn.functional as F
 from torchvision.transforms.functional import resize
 from typing_extensions import Literal
 # from torchtyping import TensorType
 
-from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
+from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.data.scene_box import OrientedBox
-from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
-from nerfstudio.engine.optimizers import Optimizers
 
 # need following import for background color override
 from nerfstudio.model_components import renderers
@@ -52,23 +48,21 @@ from nerfstudio.utils.rich_utils import CONSOLE
 
 # sms imports
 from nerfstudio.models.splatfacto import SplatfactoModelConfig, SplatfactoModel
-from nerfstudio.viewer.viewer_elements import ViewerButton, ViewerSlider, ViewerControl, ViewerVec3
+from nerfstudio.viewer.viewer_elements import ViewerButton, ViewerSlider, ViewerControl
 from pogs.fields.gaussian_field import GaussianField
 from pogs.encoders.image_encoder import BaseImageEncoder
 from pogs.field_components.gaussian_fieldheadnames import GaussianFieldHeadNames
 from nerfstudio.model_components import losses
 from pogs.model_components.losses import DepthLossType, mse_depth_loss, depth_ranking_loss, pearson_correlation_depth_loss
-from nerfstudio.viewer.viewer import VISER_NERFSTUDIO_SCALE_RATIO
 from nerfstudio.utils.colormaps import apply_colormap
 import viser.transforms as vtf
-from pathlib import Path
 from cuml.cluster.hdbscan import HDBSCAN
 import cv2
 import open3d as o3d
 import time
 from collections import OrderedDict
 
-from pogs.data.utils.dino_dataloader import get_img_resolution
+from pogs.data.utils.dino_dataloader import get_img_resolution, MAX_DINO_SIZE
 from sklearn.neighbors import NearestNeighbors
 
 def random_quat_tensor(N):
@@ -129,7 +123,7 @@ class POGSModelConfig(SplatfactoModelConfig):
     """weight of clip loss"""
     output_depth_during_training: bool = True
     """If True, output depth during training. Otherwise, only output depth during evaluation."""
-    camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SE3"))
+    camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
     gaussian_dim:int = 64
     """Dimension the gaussians actually store as features"""
@@ -141,8 +135,9 @@ class POGSModelConfig(SplatfactoModelConfig):
     """Minimum screen size of masks to use for supervision"""
     depth_loss_mult: float = 0.001
     """Lambda of the depth loss."""
-    depth_loss_type: DepthLossType = DepthLossType.MSE
+    depth_loss_type: DepthLossType = DepthLossType.NONE
     """Depth loss type."""
+    num_downscales: int = 0
 
 class POGSModel(SplatfactoModel):
 
@@ -286,7 +281,8 @@ class POGSModel(SplatfactoModel):
         else:
             optimized_camera_to_world = camera.camera_to_worlds
 
-        background = get_color('white').to(self.device)
+        # background = get_color('white').to(self.device)
+        background = self._get_background_color()
         # cropping
         if self.crop_box is not None and not self.training:
             crop_ids = self.crop_box.within(self.means).squeeze()
@@ -373,8 +369,8 @@ class POGSModel(SplatfactoModel):
             
         render, alpha, info = rasterization(
             means=means_crop,
-            quats=quats_crop, # / quats_crop.norm(dim=-1, keepdim=True),
-            scales=torch.exp(scales_crop),
+            quats=quats_crop,
+            scales=torch.exp(scales_crop), # rasterization does normalization internally
             opacities=torch.sigmoid(opacities_crop).squeeze(-1),
             colors=colors_crop,
             viewmats=viewmat,  # [1, 4, 4]
@@ -390,7 +386,6 @@ class POGSModel(SplatfactoModel):
             sparse_grad=False,
             absgrad=self.strategy.absgrad if isinstance(self.strategy, DefaultStrategy) else False,
             rasterize_mode=self.config.rasterize_mode,
-            # set some threshold to disregrad small gaussians for faster rendering.
         )
         
         if self.training:
@@ -443,7 +438,7 @@ class POGSModel(SplatfactoModel):
                     
                     field_output, alpha, info = rasterization(
                         means=means_crop,
-                        quats=quats_crop / quats_crop.norm(dim=-1, keepdim=True),
+                        quats=quats_crop,
                         scales=torch.exp(scales_crop),
                         opacities=torch.sigmoid(opacities_crop).squeeze(-1),
                         colors=clip_hash_encoding,
@@ -459,8 +454,6 @@ class POGSModel(SplatfactoModel):
                         sparse_grad=False,
                         absgrad=True,
                         rasterize_mode=self.config.rasterize_mode,
-                        # set some threshold to disregrad small gaussians for faster rendering.
-                        # radius_clip=3.0,
                     )
 
                     # rescale the camera back to original dimensions
@@ -480,34 +473,46 @@ class POGSModel(SplatfactoModel):
 
                     outputs["instance"] = field_output[GaussianFieldHeadNames.INSTANCE].to(dtype=torch.float32)
 
-                if "clip_downscale_factor" not in camera.metadata and not rgb_only:
-                    # N x B x 1; N
-                    max_across, self.best_scales, instances_out = self.get_max_across(means_crop, quats_crop, scales_crop, opacities_crop, viewmat, K, H, W, preset_scales=None)
+                if camera.metadata is not None:
+                    if "clip_downscale_factor" not in camera.metadata and not rgb_only:
+                        # N x B x 1; N
+                        max_across, self.best_scales, instances_out = self.get_max_across(means_crop, quats_crop, scales_crop, opacities_crop, viewmat, K, H, W, preset_scales=None)
 
-                    if not torch.isnan(instances_out).any():
-                        outputs["group_feats"] = instances_out
-                    else:
-                        print("instance loss may be nan")
+                        if not torch.isnan(instances_out).any():
+                            outputs["group_feats"] = instances_out
+                        else:
+                            print("instance loss may be nan")
 
-                    for i in range(len(self.image_encoder.positives)):
-                        max_across[i][max_across[i] < self.relevancy_thresh.value] = 0
-                        outputs[f"relevancy_{i}"] = max_across[i].view(H, W, -1)
+                        if not hasattr(self, "image_encoder"): # Await Load
+                            if not hasattr(self.image_encoder, "positives"):
+                                time.sleep(0.2)
+                                
+                        for i in range(len(self.image_encoder.positives)):
+                            max_across[i][max_across[i] < self.relevancy_thresh.value] = 0
+                            outputs[f"relevancy_{i}"] = max_across[i].view(H, W, -1)
 
         # DINO stuff
         if (self.step - self.datamanager.dino_step > 0) or tracking:
             p_size = 14 
 
-            downscale = 1.0 if not self.training else (self.config.dino_rescale_factor*1050/max(H,W))/p_size
+            downscale = (self.config.dino_rescale_factor*MAX_DINO_SIZE/max(H,W))/p_size
+            
+            if camera.metadata is not None:
+                downscale = 1.0 if ("clip_downscale_factor" not in camera.metadata and not tracking) else downscale
+            elif tracking:
+                downscale = 1.0
             h,w = get_img_resolution(H, W, p = p_size)
             dino_K = K.clone()
             dino_K[:, :2, :] *= downscale
-            if self.training:
-                dino_h,dino_w = self.config.dino_rescale_factor*(h//p_size),self.config.dino_rescale_factor*(w//p_size)
-            else:
+            dino_h,dino_w = self.config.dino_rescale_factor*(h//p_size),self.config.dino_rescale_factor*(w//p_size)
+            if camera.metadata is not None:
+                if "clip_downscale_factor" not in camera.metadata:
+                    dino_h,dino_w = H,W
+            elif tracking:
                 dino_h,dino_w = H,W
             dino_feats, dino_alpha, _ = rasterization(
                 means=means_crop.detach() if self.training else means_crop,
-                quats=F.normalize(quats_crop,dim=1).detach(),
+                quats=quats_crop.detach(),
                 scales=torch.exp(scales_crop).detach(),
                 opacities=torch.sigmoid(opacities_crop).squeeze(-1).detach(),
                 colors=dino_crop,
@@ -522,7 +527,6 @@ class POGSModel(SplatfactoModel):
                 sparse_grad=False,
                 absgrad=False,
                 rasterize_mode=self.config.rasterize_mode,
-                tile_size=10
             )
             feat_shape = dino_feats.shape
             if torch.isnan(dino_alpha).any() or torch.isinf(dino_alpha).any():
@@ -537,7 +541,6 @@ class POGSModel(SplatfactoModel):
             if not self.training:
                 dino_feats[dino_alpha.squeeze(-1) < 0.8] = 0
             outputs['dino'] = dino_feats.squeeze(0)
-            
         return outputs
     
     def _get_downscale_factor(self):
@@ -667,6 +670,7 @@ class POGSModel(SplatfactoModel):
             # encourage the nearest neighbors to have similar dino feats
             if self.step > (self.datamanager.dino_step+1000):
                 loss_dict['dino_nn_loss'] = .01*self.gauss_params['dino_feats'][self.nearest_ids].var(dim=1).sum()
+        
         if self.config.depth_loss_type not in (DepthLossType.NONE,) and 'depth' in outputs and 'depth_image' in batch:
             assert metrics_dict is not None and ("depth_loss" in metrics_dict or "depth_ranking" in metrics_dict)
             if "depth_ranking" in metrics_dict:

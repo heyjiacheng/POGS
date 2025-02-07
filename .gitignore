@@ -40,3 +40,4 @@ media/POGS.mp4
 outputs/*
 pogs/tracking/models/
 *.mp4
+*.ipynb
