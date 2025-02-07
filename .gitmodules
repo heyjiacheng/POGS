@@ -1,0 +1,6 @@
+[submodule "pogs/dependencies/detectron2"]
+	path = pogs/dependencies/detectron2
+	url = https://github.com/facebookresearch/detectron2.git
+[submodule "pogs/dependencies/Detic"]
+	path = pogs/dependencies/Detic
+	url = https://github.com/facebookresearch/Detic.git

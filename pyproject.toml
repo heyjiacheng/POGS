@@ -1,0 +1,20 @@
+[project]
+name = "pogs"
+version = "0.1.1"
+requires-python = ">=3.10"
+
+dependencies=[
+    "Pillow",
+    "open-clip-torch",
+    "numpy==1.26.4",
+    "nerfstudio>=1.1.1",
+    "torchtyping",
+]
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["pogs*"]
+
+[project.entry-points.'nerfstudio.method_configs']
+pogs = 'pogs.pogs_config:pogs_method'
