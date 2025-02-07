@@ -35,8 +35,6 @@ from nerfstudio.models.splatfacto import RGB2SH
 from torch.nn import Parameter
 import torch.nn.functional as F
 from torchvision.transforms.functional import resize
-from typing_extensions import Literal
-# from torchtyping import TensorType
 
 from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.cameras.cameras import Cameras
@@ -113,7 +111,6 @@ def get_viewmat(optimized_camera_to_world):
 @dataclass
 class POGSModelConfig(SplatfactoModelConfig):
 
-    # TODO: remove already inherited attributes
     _target: Type = field(default_factory=lambda: POGSModel)
     split_screen_size: float = 0.025
     """if a gaussian is more than this percent of screen space, split it"""
@@ -135,7 +132,7 @@ class POGSModelConfig(SplatfactoModelConfig):
     """Minimum screen size of masks to use for supervision"""
     depth_loss_mult: float = 0.001
     """Lambda of the depth loss."""
-    depth_loss_type: DepthLossType = DepthLossType.NONE
+    depth_loss_type: DepthLossType = DepthLossType.MSE
     """Depth loss type."""
     num_downscales: int = 0
 
@@ -281,7 +278,6 @@ class POGSModel(SplatfactoModel):
         else:
             optimized_camera_to_world = camera.camera_to_worlds
 
-        # background = get_color('white').to(self.device)
         background = self._get_background_color()
         # cropping
         if self.crop_box is not None and not self.training:
@@ -350,7 +346,6 @@ class POGSModel(SplatfactoModel):
             else:
                 opacities_crop = self.temp_opacities
 
-        # BLOCK_WIDTH = 16  # this controls the tile size of rasterization, 16 is a good default
         K = camera.get_intrinsics_matrices().cuda()
         K[:, :2, :] *= camera_scale_fac
         # apply the compensation of screen space blurring to gaussians
@@ -414,9 +409,7 @@ class POGSModel(SplatfactoModel):
         
         if self.datamanager.use_clip or self.loaded_ckpt and not tracking:
             if (self.step - self.datamanager.lerf_step > 0):
-                # if camera.metadata is not None:
-                #     if "clip_downscale_factor" not in camera.metadata:
-                #         return {"rgb": rgb.squeeze(0), "depth": depth_im, "accumulation": alpha.squeeze(0), "background": background}
+                
                 ########################
                 # CLIP Relevancy Field #
                 ########################
@@ -716,7 +709,7 @@ class POGSModel(SplatfactoModel):
             cluster_argmax = np.array(avg_relevancy_per_cluster).argmax()
 
             cluster_mask = np.where(labels != cluster_argmax)
-            # import pdb; pdb.set_trace()
+
             self.temp_opacities = self.opacities.data.clone()
             self.temp_opacities[cluster_mask[0]] = self.opacities.data.min()/2
 
@@ -739,7 +732,7 @@ class POGSModel(SplatfactoModel):
             relevancy = self.image_encoder.get_relevancy(clip_feats / (clip_feats.norm(dim=-1, keepdim=True)+1e-6), 0).view(self.num_points, -1)
             color = apply_colormap(relevancy[..., 0:1])
             self.crop_ids = (relevancy[..., 0] / relevancy[..., 0].max() > self.relevancy_thresh.value)
-            # import pdb; pdb.set_trace()
+
             self.viewer_control.viser_server.add_point_cloud(
                 "Relevancy", 
                 self.means.numpy(force=True)[self.crop_ids.cpu()] * 10, 
@@ -748,9 +741,7 @@ class POGSModel(SplatfactoModel):
                 )
 
             # Add a slider to debug the relevancy values
-            
-            # self.crop_ids = (relevancy[..., 0] > self.relevancy_thresh.value)
-            
+                        
             #Define all crop viewer elements
             self._crop_center_init = self.means[self.crop_ids].mean(dim=0).cpu().numpy()
             self.original_means = self.means.data.clone()
@@ -854,14 +845,12 @@ class POGSModel(SplatfactoModel):
 
         # Cluster the gaussians using HDBSCAN.
         # We will first cluster the downsampled gaussians, then 
-        #  assign the full gaussians to the spatially closest downsampled gaussian.
+        # assign the full gaussians to the spatially closest downsampled gaussian.
 
         vec_o3d = o3d.utility.Vector3dVector(positions)
         pc_o3d = o3d.geometry.PointCloud(vec_o3d)
         min_bound = np.clip(pc_o3d.get_min_bound(), -1, 1)
         max_bound = np.clip(pc_o3d.get_max_bound(), -1, 1)
-        # downsample size to be a percent of the bounding box extent
-        # downsample_size = 0.01 * scale
         pc, _, ids = pc_o3d.voxel_down_sample_and_trace(
             0.0001, min_bound, max_bound
         )
@@ -941,12 +930,10 @@ class POGSModel(SplatfactoModel):
         return self.gaussian_field.get_instance_outputs_from_feature(x)
 
     def get_max_across(self, means_crop, quats_crop, scales_crop, opacities_crop, viewmat, K, H, W, preset_scales=None):
-        # probably not a good idea bc it's prob going to be a lot of memory
         n_phrases = len(self.image_encoder.positives)
         n_phrases_maxs = [None for _ in range(n_phrases)]
         n_phrases_sims = [None for _ in range(n_phrases)]
         scales_list = torch.linspace(0.0, 0.5, 30).to(self.device)
-        # scales_list = [0.1]
         all_probs = []
         BLOCK_WIDTH = 16
 
@@ -971,13 +958,11 @@ class POGSModel(SplatfactoModel):
                         sparse_grad=False,
                         absgrad=True,
                         rasterize_mode=self.config.rasterize_mode,
-                        # set some threshold to disregrad small gaussians for faster rendering.
-                        # radius_clip=3.0,
             )
 
         for i, scale in enumerate(scales_list):
             with torch.no_grad():
-                out = self.gaussian_field.get_outputs_from_feature(field_output.view(H*W, -1), scale * torch.ones(H*W, 1, device=self.device)) #[GaussianFieldHeadNames.CLIP].to(dtype=torch.float32).view(H, W, -1)
+                out = self.gaussian_field.get_outputs_from_feature(field_output.view(H*W, -1), scale * torch.ones(H*W, 1, device=self.device))
                 instances_output_im = out[GaussianFieldHeadNames.INSTANCE].to(dtype=torch.float32).view(H, W, -1)
                 clip_output_im = out[GaussianFieldHeadNames.CLIP].to(dtype=torch.float32).view(H, W, -1)
 
@@ -990,5 +975,5 @@ class POGSModel(SplatfactoModel):
                     if n_phrases_maxs[j] is None or pos_prob.max() > n_phrases_sims[j].max():
                         n_phrases_maxs[j] = scale
                         n_phrases_sims[j] = pos_prob
-        # print(f"Best scales: {n_phrases_maxs}")#, Words: {self.image_encoder.positives}, Scale List: {scales_list}, All probs: {all_probs}")
-        return torch.stack(n_phrases_sims), torch.Tensor(n_phrases_maxs), instances_output_im#, relevancy_rasterized
+
+        return torch.stack(n_phrases_sims), torch.Tensor(n_phrases_maxs), instances_output_im

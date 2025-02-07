@@ -9,7 +9,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import json
 # from nerfstudio.configs import base_config as cfg
 from nerfstudio.models.base_model import Model, ModelConfig
-from nerfstudio.utils.math import intersect_aabb, intersect_obb
 from nerfstudio.pipelines.base_pipeline import (
     VanillaPipeline,
     VanillaPipelineConfig,
@@ -18,7 +17,6 @@ import trimesh
 import viser
 
 from dataclasses import dataclass, field
-from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.models.base_model import ModelConfig
 from pogs.data.utils.patch_embedding_dataloader import PatchEmbeddingDataloader
 from pogs.pogs import POGSModelConfig
@@ -30,12 +28,11 @@ from sklearn.neighbors import NearestNeighbors
 from nerfstudio.viewer.viewer import VISER_NERFSTUDIO_SCALE_RATIO
 from gsplat.cuda._torch_impl import _quat_to_rotmat
 from scipy.spatial.transform import Rotation as Rot
-from typing import Literal, Type, Optional, List, Tuple, Dict
+from typing import Literal, Type, Optional
 from nerfstudio.viewer.viewer_elements import *
 import torch
 import numpy as np 
 import math
-from scipy.spatial.distance import cdist
 import open3d as o3d
 import os
 import os.path as osp
@@ -151,7 +148,7 @@ class POGSPipeline(VanillaPipeline):
             pts_rgb = self.datamanager.train_dataparser_outputs.metadata["points3D_rgb"]
             seed_pts = (pts, pts_rgb)
         self.datamanager.to(device)
-        # TODO(ethan): get rid of scene_bounds from the model
+
 
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
         self._model = config.model.setup(
@@ -201,9 +198,6 @@ class POGSPipeline(VanillaPipeline):
         self.crop_group_tf_list = []
         self.model_keep_inds = None
 
-        # self.move_current_crop = ViewerButton(name="Drag Current Crop", cb_hook=self._drag_current_crop, disabled=True)
-        # self.crop_transform_handle = None
-
         self.reset_state = ViewerButton(name="Reset State", cb_hook=self._reset_state, disabled=True)
 
         self.z_export_options = ViewerCheckbox(name="Export Options", default_value=False, cb_hook=self._update_export_options)
@@ -231,14 +225,12 @@ class POGSPipeline(VanillaPipeline):
             self.traj_file = Path(osp.join(self.traj_dir, self.traj_dirs[-1], "part_deltas_traj.npy"))
             if self.traj_file.exists():
                 self.traj = np.load(self.traj_file, allow_pickle=True)
-                # assert self.traj.shape[-1] == len(self.group_masks_local), f"Number of objects ({self.traj.shape[-1]}) tracked in trajectory file {self.traj_file} does not match number of current group masks ({len(self.group_masks_local)})"
                 self.preview_frame_slider = ViewerSlider("Preview Frame", min_value=0, max_value=self.traj.shape[0] - 1, step=1, default_value=0, cb_hook=self._preview_frame_slider)
                 self.play_button = ViewerButton("Play", cb_hook=self._play_button)
                 self.pause_button = ViewerButton("Pause", cb_hook=self._pause_button)
                 self.framerate_number = ViewerNumber("FPS", default_value=3.0)
                 self.framerate_buttons = ViewerButtonGroup("", default_value=3, options = ("3", "5", "10"), cb_hook=self._framerate_buttons)
 
-            # assert self.traj.shape[-1] == len(self.group_masks_local), f"Number of objects ({self.traj.shape[-1]}) tracked in trajectory file {self.traj_file} does not match number of current group masks ({len(self.group_masks_local)})"
 
     def _framerate_buttons(self, button: ViewerButtonGroup) -> None:
         self.framerate_number.value = float(self.framerate_buttons.value)
@@ -380,14 +372,14 @@ class POGSPipeline(VanillaPipeline):
 
         # get the closest point to the sphere, using kdtree
         sphere_inds = inds
-        # scales = torch.ones((positions.shape[0], 1)).to(self.device)
+
 
         keep_list = []
 
         if self.model.cluster_labels == None:
             instances = self.model.get_grouping_at_points(positions)  # (1+N, 256)
             click_instance = instances[0]
-            # import pdb; pdb.set_trace()
+
             affinity = torch.norm(click_instance - instances, dim=1)[1:]
 
             # Filter out points that have affinity < 0.5 (i.e., not likely to be in the same group)
@@ -405,7 +397,6 @@ class POGSPipeline(VanillaPipeline):
                 curr_point_min = keep_points.get_min_bound()
                 curr_point_max = keep_points.get_max_bound()
 
-                # downsample_size = 0.01 * s
                 _, _, curr_points_ds_ids = keep_points.voxel_down_sample_and_trace(
                     voxel_size=0.0001,
                     min_bound=curr_point_min,
@@ -429,8 +420,7 @@ class POGSPipeline(VanillaPipeline):
 
             else:
                 clusters = np.asarray(keep_points.cluster_dbscan(eps=0.02, min_points=5))
-            # else:
-            #     clusters = np.asarray(keep_points)
+
             # Choose the cluster that contains the click point. If there is none, move to the next scale.
             cluster_inds = clusters[np.isin(keeps, sphere_inds)]
             cluster_inds = cluster_inds[cluster_inds != -1]
@@ -459,8 +449,7 @@ class POGSPipeline(VanillaPipeline):
             sphere_inds_keep = [(torch.where(keep_inds_list == torch.tensor(sphere_inds)[i])[0]).item() for i in sphere_ind_vote.tolist()]
             # Secondary clustering in cartesian space to filter outliers
             group_clusters = keep_points_o3d.cluster_dbscan(eps=0.010, min_points=1)
-            # group_clusters = np.asarray(keep_points_o3d.points)
-            # import pdb; pdb.set_trace()
+
             inner_vote = torch.tensor(group_clusters)[sphere_inds_keep].mode()[0].item()
             keep_inds_list_inner = torch.where(torch.tensor(group_clusters) == inner_vote)[0]
             keep_list = [keep_inds_list[keep_inds_list_inner]]
@@ -482,7 +471,7 @@ class POGSPipeline(VanillaPipeline):
         self.add_crop_to_group_list.set_disabled(False)
         if len(self.crop_group_list) > 0:
             self.add_crop_to_previous_group.set_disabled(False)
-        # self.move_current_crop.set_disabled(False)
+
 
         keep_inds = self.crop_group[0]
         prev_state = self.state_stack[-1]
@@ -490,19 +479,16 @@ class POGSPipeline(VanillaPipeline):
             self.model.gauss_params[name] = prev_state[name][keep_inds]
 
         """Add a transform control to the current scene, and update the model accordingly."""
-        # self.move_crop_frame.set_disabled(True)  # Disable user from creating another drag handle
+
         self.viewer_control.viewer._trigger_rerender()
         scene_centroid = self.model.gauss_params['means'].detach().mean(dim=0)
         
         
         ## Delete if reorienting to bbox is iffy
         points = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(self.model.gauss_params['means'].detach().cpu().numpy()))
-        # aabb = points.get_axis_aligned_bounding_box()
-        # aabb.color = (1, 0, 0)
+
         obb = points.get_oriented_bounding_box()
-        # obb.color = (0, 1, 0)
-        # o3d.visualization.draw_geometries([o3d.geometry.TriangleMesh.create_coordinate_frame(), points, aabb, obb])
-        
+
         R = obb.R
         target_z = np.array([0, 0, 1])
         dot_products = np.abs(R.T @ target_z)
@@ -536,49 +522,6 @@ class POGSPipeline(VanillaPipeline):
             handle_rotmat = _quat_to_rotmat(torch.tensor(self.crop_transform_handle.wxyz).to(self.device).float())
 
             self.viewer_control.viewer._trigger_rerender()
-        
-
-        
-    # def _drag_current_crop(self, button: ViewerButton):
-    #     """Add a transform control to the current scene, and update the model accordingly."""
-    #     self.move_current_crop.set_disabled(True)  # Disable user from creating another drag handle
-        
-    #     scene_centroid = self.model.gauss_params['means'].detach().mean(dim=0)
-    #     self.crop_transform_handle = self.viewer_control.viser_server.add_transform_controls(
-    #         name=f"/scene_transform",
-    #         position=(VISER_NERFSTUDIO_SCALE_RATIO*scene_centroid).cpu().numpy(),
-    #     )
-
-    #     # Visualize the whole scene -- the points corresponding to the crop will be controlled by the transform handle.
-    #     crop_inds = self.crop_group[self.crop_to_group_level.value]
-    #     prev_state = self.state_stack[-1]
-    #     for name in self.model.gauss_params.keys():
-    #         self.model.gauss_params[name] = prev_state[name].clone()
-
-    #     curr_means = self.model.gauss_params['means'].clone().detach()
-    #     curr_rotmats = _quat_to_rotmat(self.model.gauss_params['quats'][crop_inds].detach())
-
-    #     @self.crop_transform_handle.on_update
-    #     def _(_):
-    #         handle_position = torch.tensor(self.crop_transform_handle.position).to(self.device)
-    #         handle_position = handle_position / VISER_NERFSTUDIO_SCALE_RATIO
-    #         handle_rotmat = _quat_to_rotmat(torch.tensor(self.crop_transform_handle.wxyz).to(self.device).float())
-
-    #         means = self.model.gauss_params['means'].detach()
-    #         quats = self.model.gauss_params['quats'].detach()
-
-    #         means[crop_inds] = handle_position.float() + torch.matmul(
-    #             handle_rotmat, (curr_means[crop_inds] - curr_means[crop_inds].mean(dim=0)).T
-    #         ).T
-    #         quats[crop_inds] = torch.Tensor(Rot.from_matrix(
-    #             torch.matmul(handle_rotmat.float(), curr_rotmats.float()).cpu().numpy()
-    #         ).as_quat()).to(self.device)  # this is in xyzw format
-    #         quats[crop_inds] = quats[crop_inds][:, [3, 0, 1, 2]]  # convert to wxyz format
-
-    #         self.model.gauss_params['means'] = torch.nn.Parameter(means.float())
-    #         self.model.gauss_params['quats'] = torch.nn.Parameter(quats.float())
-
-    #         self.viewer_control.viewer._trigger_rerender()  # trigger viewer rerender
 
             
     def _update_interaction_method(self, dropdown: ViewerDropdown):
@@ -669,9 +612,9 @@ class POGSPipeline(VanillaPipeline):
         segmented_filename = Path(output_dir) / f"prime_seg_gaussians.ply"
         full_filename = Path(output_dir) / f"prime_full_gaussians.ply"
 
-        # Copied from exporter.py
-        from collections import OrderedDict
-        map_to_tensors = OrderedDict()
+
+
+
         model=self.model
 
         with torch.no_grad():
@@ -680,11 +623,11 @@ class POGSPipeline(VanillaPipeline):
                 shs_0 = model.shs_0.contiguous().cpu().numpy()
             colors = model.colors.cpu().numpy()
             normalized_colors = (colors - np.min(colors)) / (np.max(colors) - np.min(colors))
-            # import viser
-            # new_colors_viser = viser.ViserServer()
+
+            
             positions = positions.astype('float64')
             normalized_colors = normalized_colors.astype('float64')
-            # new_colors_viser.add_point_cloud('ply_pc',positions,normalized_colors,point_size=0.001)
+
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(positions)
             pcd.colors = o3d.utility.Vector3dVector(normalized_colors)
@@ -699,11 +642,11 @@ class POGSPipeline(VanillaPipeline):
             else:
                 torch.sigmoid(features_dc)
             normalized_colors = (colors - np.min(colors)) / (np.max(colors) - np.min(colors))
-            # import viser
-            # new_colors_viser = viser.ViserServer()
+
+            
             positions = positions.astype('float64')
             normalized_colors = normalized_colors.astype('float64')
-            # new_colors_viser.add_point_cloud('ply_pc',positions,normalized_colors,point_size=0.001)
+
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(positions)
             pcd.colors = o3d.utility.Vector3dVector(normalized_colors)

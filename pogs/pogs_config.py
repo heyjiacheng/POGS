@@ -2,18 +2,14 @@
 pogs configuration file.
 """
 
-from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
-from nerfstudio.engine.optimizers import AdamOptimizerConfig, RAdamOptimizerConfig
+from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.plugins.types import MethodSpecification
-from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
 from nerfstudio.engine.trainer import TrainerConfig as TrainerConfigBase
 from pogs.encoders.openclip_encoder import OpenCLIPNetworkConfig
 from pogs.pogs import POGSModelConfig
-
-from nerfstudio.data.dataparsers.colmap_dataparser import ColmapDataParserConfig
 
 
 from pogs.pogs_pipeline import POGSPipelineConfig

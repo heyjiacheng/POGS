@@ -1,17 +1,15 @@
 import torch
-import viser
 import viser.transforms as vtf
 import time
 import numpy as np
 import trimesh
-from typing import Optional, List, Tuple
+from typing import List, Tuple
 import moviepy as mpy
 from copy import deepcopy
 
 from nerfstudio.utils.eval_utils import eval_setup
 from pathlib import Path
 from threading import Lock
-import warp as wp
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.viewer.viewer import Viewer
 from nerfstudio.configs.base_config import ViewerConfig
@@ -22,8 +20,7 @@ from nerfstudio.models.splatfacto import SH2RGB
 from pogs.tracking.rigid_group_optimizer import RigidGroupOptimizer, RigidGroupOptimizerConfig
 from pogs.tracking.toad_object import ToadObject
 from pogs.tracking.observation import PosedObservation, Frame
-from pogs.data.utils.dino_dataloader import DinoDataloader
-from pogs.encoders.openclip_encoder import OpenCLIPNetworkConfig, OpenCLIPNetwork
+from pogs.encoders.openclip_encoder import OpenCLIPNetwork
 import open3d as o3d
 from pogs.tracking.observation import Future
 
@@ -68,7 +65,7 @@ class Optimizer:
         init_cam_pose: torch.Tensor,  # initial camera pose in OpenCV format
     ):
         self.config_path = config_path
-        # import pdb; pdb.set_trace()
+
         clusters = config_path.parent.parent.parent.joinpath("clusters.npy") # For preloading the cluster info for pre-clustered objects instead of clustering interactively
         print("clusters file", clusters)
         if not clusters.exists():
@@ -322,10 +319,9 @@ class Optimizer:
                             del roiframe_dict[attr]
                     del roiframe
                 del self.optimizer.frame._roi_frames
-            # import pdb; pdb.set_trace()
+
             del self.optimizer.frame
-            # torch.cuda.empty_cache()
-        # import pdb; pdb.set_trace()
+        
         self.optimizer.set_observation(frame)
 
     def init_obj_pose(self):
@@ -359,8 +355,7 @@ class Optimizer:
 
     def get_pointcloud(self) -> trimesh.PointCloud:
         """Get the pointcloud of the object parts in camera frame."""
-        # c2w = self.cam2world.camera_to_worlds.squeeze()  # (3, 4)
-        # parts2cam = self.optimizer.get_poses_relative_to_camera(c2w)  # --> (N, 4, 4)
+
         with torch.no_grad():
             self.optimizer.apply_to_model(self.optimizer.part_deltas, self.optimizer.centroids, self.optimizer.group_labels)
         points = self.optimizer.dig_model.means.clone().detach()
@@ -429,7 +424,7 @@ class Optimizer:
         n_phrases_maxs = [None for _ in range(n_phrases)]
         n_phrases_sims = [None for _ in range(n_phrases)]
         scales_list = torch.linspace(0.0, 0.5, 30).to(self.optimizer.pogs_model.device)
-        # scales_list = [0.1]
+
         all_probs = []
         
         init_means = self.optimizer.init_means # (N, 3)
@@ -465,9 +460,7 @@ class Optimizer:
     def state_to_ply(self, obj_id: int = None):
         """Write translated gaussian means to a ply file for grasping subprocess."""
         global_filename = self.config_path.parent.joinpath("global.ply")
-        
-        # TODO: Points currently un-updated by self.optimizer.part_deltas
-        
+                
         # Global state
         prev_state = self.pipeline.state_stack[-1]
         positions = prev_state["means"].detach().cpu().numpy().copy() # [N, 3]

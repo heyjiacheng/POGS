@@ -1,5 +1,5 @@
 import torch
-from typing import List, Optional, Tuple, Callable, Generic, TypeVar
+from typing import List, Optional, Callable, Generic, TypeVar
 from nerfstudio.cameras.cameras import Cameras
 from torchvision.transforms.functional import resize
 from pogs.tracking.utils import *
@@ -28,7 +28,7 @@ class Frame:
     metric_depth: bool
     _depth: Future[torch.Tensor]
     _dino_feats: Future[torch.Tensor]
-    _hand_mask: Future[torch.Tensor]
+    # _hand_mask: Future[torch.Tensor]
 
     @property
     def depth(self):
@@ -38,9 +38,9 @@ class Frame:
     def dino_feats(self):
         return self._dino_feats.retrieve()
 
-    @property
-    def hand_mask(self):
-        return self._hand_mask.retrieve()
+    # @property
+    # def hand_mask(self):
+    #     return self._hand_mask.retrieve()
     
     @property
     def mask(self):
@@ -48,9 +48,9 @@ class Frame:
     
     def __init__(self, rgb: torch.Tensor, camera: Cameras, dino_fn: Callable, metric_depth_img: Optional[torch.Tensor], 
                  xmin: Optional[float] = None, xmax: Optional[float] = None, ymin: Optional[float] = None, ymax: Optional[float] = None):
-        # self.orig_camera = deepcopy(camera.to('cuda'))
+
         self.camera = deepcopy(camera.to('cuda'))
-        # self.camera.rescale_output_resolution(self.rasterize_resolution/min(camera.width.item(),camera.height.item()))
+
         self._dino_fn = dino_fn
         self.rgb = resize(
                 rgb.permute(2, 0, 1),
@@ -86,17 +86,17 @@ class Frame:
             ).permute(1, 2, 0)
             return dino_feats
         self._dino_feats = Future(_get_dino)
-        @torch.no_grad()
-        def _get_hand_mask():
-            hand_mask = get_hand_mask((self.rgb * 255).to(torch.uint8))
-            hand_mask = (
-                torch.nn.functional.max_pool2d(
-                    hand_mask[None, None], 3, padding=1, stride=1
-                ).squeeze()
-                == 0.0
-            )
-            return hand_mask
-        self._hand_mask = Future(_get_hand_mask)
+        # @torch.no_grad()
+        # def _get_hand_mask():
+        #     hand_mask = get_hand_mask((self.rgb * 255).to(torch.uint8))
+        #     hand_mask = (
+        #         torch.nn.functional.max_pool2d(
+        #             hand_mask[None, None], 3, padding=1, stride=1
+        #         ).squeeze()
+        #         == 0.0
+        #     )
+        #     return hand_mask
+        # self._hand_mask = Future(_get_hand_mask)
         @torch.no_grad()
         def _get_mask():
             obj_mask = resize(
@@ -138,7 +138,7 @@ class PosedObservation:
             self._original_depth = metric_depth_img
         self._original_camera = deepcopy(camera.to('cuda'))
         cam = deepcopy(camera.to('cuda'))
-        # cam.rescale_output_resolution(self.rasterize_resolution/max(camera.width.item(),camera.height.item()))
+
         self._frame = Frame(rgb, cam, dino_fn, metric_depth_img)
         self._roi_frames = []
         self._obj_masks = None
@@ -191,8 +191,8 @@ class PosedObservation:
         if max(camera.width.item(),camera.height.item()) > self.max_roi_resolution:
             camera.rescale_output_resolution(self.max_roi_resolution/max(camera.width.item(),camera.height.item()))
         depth = self._original_depth[ymin:ymax, xmin:xmax].clone().squeeze(-1)
-        # import pdb ;pdb.set_trace()
+
         self._roi_frames[idx] = Frame(rgb, camera, self._dino_fn, depth, xmin, xmax, ymin, ymax)
         if len(self._obj_masks) > 0:
-            # import pdb ;pdb.set_trace()
+
             self._roi_frames[idx].obj_mask = self._obj_masks[idx].squeeze(0)[ymin:ymax, xmin:xmax].clone()

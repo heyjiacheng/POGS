@@ -24,7 +24,6 @@ class FeatureDataloader(ABC):
 
     @abstractmethod
     def __call__(self, img_points):
-        # img_points: (B, 3) # (img_ind, x, y)
         pass
 
     @abstractmethod
@@ -54,8 +53,6 @@ class FeatureDataloader(ABC):
     def try_load(self, img_list: torch.Tensor):
         try:
             self.load()
-            # print("Loaded")
         except (FileNotFoundError, ValueError):
-            # print("Not found")
             self.create(img_list)
             self.save()

@@ -20,7 +20,7 @@ DEVICE = 'cuda:0'
 set_initial_frame = False
 
 def main(
-    config_path: str = "/home/yujustin/pogs/outputs/drill/pogs/2025-02-06_231618/config.yml",
+    config_path: str = "/home/yujustin/pogs/outputs/drill/pogs/2025-02-07_004727/config.yml",
     offline_folder: str = '/home/yujustin/pogs/data/demonstrations/drill'
 ):
     """Quick interactive demo for object tracking.
@@ -29,7 +29,7 @@ def main(
         config_path: Path to the nerfstudio POGS model config file.
         offline_folder: Path to the offline folder with images and depth
     """
-    image_folder = os.path.join(offline_folder,"img")
+    image_folder = os.path.join(offline_folder,"left")
     depth_folder = os.path.join(offline_folder,"depth")
     image_paths = sorted(os.listdir(image_folder))
     depth_paths = sorted(os.listdir(depth_folder))

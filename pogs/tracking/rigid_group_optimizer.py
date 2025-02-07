@@ -1,9 +1,8 @@
 import torch
 import torch.nn.functional as F
-from nerfstudio.utils.eval_utils import eval_setup
 from pathlib import Path
 import numpy as np
-from typing import List, Optional, Literal, Callable
+from typing import List, Optional
 import kornia
 from pogs.pogs import POGSModel
 from contextlib import nullcontext
@@ -12,21 +11,17 @@ from nerfstudio.engine.schedulers import (
     ExponentialDecaySchedulerConfig,
 )
 import warp as wp
-# from pogs.tracking.atap_loss import ATAPLoss
+from pogs.tracking.atap_loss import ATAPLoss
 from pogs.tracking.utils import *
 import viser.transforms as vtf
 import trimesh
 from typing import Tuple
-from nerfstudio.model_components.losses import depth_ranking_loss
 from pogs.tracking.utils2 import *
 from pogs.tracking.observation import PosedObservation, Frame
-import time
-from nerfstudio.viewer.viewer import VISER_NERFSTUDIO_SCALE_RATIO
 import wandb
 from dataclasses import dataclass
 from nerfstudio.cameras.cameras import Cameras
 import copy
-from pogs.tracking.transforms import SE3, SO3
 
 @dataclass
 class RigidGroupOptimizerConfig:
@@ -171,9 +166,6 @@ class RigidGroupOptimizer:
 
         best_loss = float("inf")
 
-        # obj_centroid = self.init_p2w_7vec[:,:3]
-
-        # for z_rot in np.linspace(0, np.pi * 2, n_seeds):
         whole_pose_adj = torch.zeros(len(self.group_masks), 7, dtype=torch.float32, device="cuda")
         # x y z qw qx qy qz
         z_rot = 0.0
@@ -201,12 +193,9 @@ class RigidGroupOptimizer:
 
         self.prev_part_deltas = best_poses
 
-        # import pdb; pdb.set_trace()        
         del loss
         del self.frame
-        # import pdb; pdb.set_trace()
         torch.cuda.empty_cache()
-        # import pdb; pdb.set_trace()
         return renders1, renders2
     
     @property
@@ -238,12 +227,10 @@ class RigidGroupOptimizer:
                 len(self.group_masks), 4, 4, dtype=torch.float32, device="cuda"
             )
             for i in range(len(self.group_masks)):
-                # if keyframe is None:
                 obj2world_physical = self.get_part2world_transform(i)
-                # else:
-                #     obj2world_physical = self.get_keyframe_part2world_transform(i, keyframe)
                 obj2world_physical[:3,3] /= self.dataset_scale
                 obj2cam_physical_batch[i, :, :] = c2w.inverse().matmul(obj2world_physical)
+
         return obj2cam_physical_batch
     
     def get_part_poses(self, keyframe: Optional[int] = None):
@@ -280,14 +267,14 @@ class RigidGroupOptimizer:
         initial_part2world = self.get_initial_part2world(i)
 
         part2world = initial_part2world.clone()
-        part2world[:3,:3] = R_delta[:3,:3].matmul(part2world[:3,:3])# rotate around world frame
+        part2world[:3,:3] = R_delta[:3,:3].matmul(part2world[:3,:3]) # rotate around world frame
         part2world[:3,3] += self.part_deltas[i,:3] # translate in world frame
         return part2world
     
     def get_initial_part2world(self,i):
         return self.init_p2w[i]
     
-    # @profile
+
     def get_optim_loss(self, frame: Frame, part_deltas, use_dino, use_depth, use_rgb, use_atap, use_hand_mask, use_mask, use_roi = False):
         """
         Returns a backpropable loss for the given frame
@@ -316,8 +303,7 @@ class RigidGroupOptimizer:
                 feats_dict["rendered_rgb"]=outputs['rgb']
                 feats_dict["rendered_dino"]=self.blur(outputs['dino'].permute(2,0,1)[None]).squeeze().permute(1,2,0)
                 feats_dict["rendered_depth"]=outputs['depth']
-                # with torch.no_grad():
-                #     feats_dict["accumulation"]=outputs["accumulation"]
+
                 if not outputs["accumulation"].any():
                     return None
             else:
@@ -338,11 +324,10 @@ class RigidGroupOptimizer:
                         depths = real_depth[valid_depths]
                         if len(depths) > 0:
                             depths_median = torch.median(depths)
-                            # reject outliers
+                            # reject outlier depths
                             reject = (real_depth > depths_median * 1.3).squeeze(-1)
                             valid_depths[reject] = 0
                             
-                            # feats_dict['valids'].append(valid_depths.unsqueeze(-1))
                         masked_depth = real_depth * valid_depths.unsqueeze(-1)
                         mask_zeros = torch.where(masked_depth == 0, 0, 1)
                         masked_depth_rendered = outputs['depth'] * valid_depths.unsqueeze(-1) * mask_zeros
@@ -382,9 +367,7 @@ class RigidGroupOptimizer:
             loss = rgb_loss
             if self.use_wandb:
                 wandb.log({"rgb_loss": rgb_loss.item()})
-        # loss = (feats_dict["real_dino"] - feats_dict["rendered_dino"]).norm(dim=-1).nanmean()
-        
-        # THIS IS BAD WE NEED TO FIX THIS (because resizing makes the image very slightly misaligned)
+
         if self.use_wandb:
             wandb.log({"DINO mse_loss": loss.mean().item()})
         if use_depth:
@@ -406,11 +389,7 @@ class RigidGroupOptimizer:
             if self.use_wandb:
                 wandb.log({"mask_bce_loss": mask_bce_loss.mean().item()})
             loss = loss + 0.6 * mask_bce_loss
-        # if use_rgb:
-        #     rgb_loss = 0.75 * (feats_dict["real_rgb"] - feats_dict["rendered_rgb"]).abs().mean()
-        #     loss = loss + rgb_loss
-        #     if self.use_wandb:
-        #         wandb.log({"rgb_loss": rgb_loss.item()})
+        
         if use_atap:
             weights = torch.ones(len(self.group_masks), len(self.group_masks),dtype=torch.float32,device='cuda')
             atap_loss = self.atap(weights)
@@ -420,7 +399,6 @@ class RigidGroupOptimizer:
 
         return loss, outputs
         
-    # @profile
     def step(self, niter=1, use_depth=False, use_rgb=False):
         part_scheduler = ExponentialDecayScheduler(
             ExponentialDecaySchedulerConfig(
@@ -441,25 +419,16 @@ class RigidGroupOptimizer:
                     frame = self.frame
                 else:
                     frame = self.frame.frame
-                # if i <= 2: 
+
                 use_dino = True
-                #     use_depth = False
-                # else: 
-                #     use_dino = False
-                #     use_depth = True
+
                 loss, outputs = self.get_optim_loss(frame, self.part_deltas, use_dino,
                         use_depth, use_rgb, self.config.use_atap, self.config.mask_hands, self.config.use_mask_loss, self.config.use_roi)
             if loss is not None:
                 loss.backward()
                 #tape backward needs to be after loss backward since loss backward propagates gradients to the outputs of warp kernels
                 tape.backward()
-            # import pdb; pdb.set_trace()
-            # rot = SO3(self.part_deltas.grad[:,3:])
-            # scaled_rot = SO3.exp(rot.log()*self.config.rot_lr_scaler)
-            # scale = scaled_rot.wxyz/rot.wxyz
-            # self.part_deltas.grad[:, 3:] *= scale
-            # import pdb ; pdb.set_trace()
-            
+
             self.part_optimizer.step()
             part_scheduler.step()
             
@@ -470,7 +439,6 @@ class RigidGroupOptimizer:
                 wandb.log({"loss": loss.item()})
         # reset lr
         self.part_optimizer.param_groups[0]["lr"] = self.config.pose_lr
-        # import pdb; pdb.set_trace()
         with torch.no_grad():
             with self.render_lock:
                 self.pogs_model.eval()
@@ -563,76 +531,6 @@ class RigidGroupOptimizer:
         self.keyframes = [d.cuda() for d in data["keyframes"]]
         self.hand_frames = data['hand_frames']
         self.hand_lefts = data['hand_lefts']
-    
-    def compute_single_hand_assignment(self) -> List[int]:
-        """
-        returns the group index closest to the hand
-
-        list of increasing distance. list[0], list[1] second best etc
-        """
-        sum_part_dists = [0]*len(self.group_masks)
-        for frame_id,hands in enumerate(self.hand_frames):
-            if len(hands) == 0:
-                continue
-            self.apply_keyframe(frame_id)
-            for h_id,h in enumerate(hands):
-                h = h.copy()
-                h.apply_transform(self.get_registered_o2w().cpu().numpy())
-                # compute distance to fingertips for each group
-                for g in range(len(self.group_masks)):
-                    group_mask = self.group_masks[g]
-                    means = self.pogs_model.gauss_params["means"][group_mask].detach()
-                    # compute nearest neighbor distance from index finger to the gaussians
-                    finger_position = h.vertices[349]
-                    thumb_position = h.vertices[745]
-                    finger_dist = (means - torch.from_numpy(np.array(finger_position)).cuda()).norm(dim=1).min().item()
-                    thumb_dist = (means - torch.from_numpy(np.array(thumb_position)).cuda()).norm(dim=1).min().item()
-                    closest_dist = (finger_dist + thumb_dist)/2
-                    sum_part_dists[g] += closest_dist
-        ids = list(range(len(self.group_masks)))
-        zipped = list(zip(ids,sum_part_dists))
-        zipped.sort(key=lambda x: x[1])
-        return [z[0] for z in zipped]
-
-    def compute_two_hand_assignment(self) -> List[Tuple[int,int]]:
-        """
-        tuple of left_group_id, right_group_id
-        list of increasing distance. list[0], list[1] second best etc
-        """
-        # store KxG tensors storing the minimum distance to left, right hands at each frame
-        left_part_dists = torch.zeros(len(self.hand_frames), len(self.group_masks),device='cuda')
-        right_part_dists = torch.zeros(len(self.hand_frames), len(self.group_masks),device='cuda')
-        for frame_id,hands in enumerate(self.hand_frames):
-            if len(hands) == 0:
-                continue
-            self.apply_keyframe(frame_id)
-            for h_id,h in enumerate(hands):
-                h = h.copy()
-                h.apply_transform(self.get_registered_o2w().cpu().numpy())
-                # compute distance to fingertips for each group
-                for g in range(len(self.group_masks)):
-                    group_mask = self.group_masks[g]
-                    means = self.pogs_model.gauss_params["means"][group_mask].detach()
-                    # compute nearest neighbor distance from index finger to the gaussians
-                    finger_position = h.vertices[349]
-                    thumb_position = h.vertices[745]
-                    finger_dist = (means - torch.from_numpy(np.array(finger_position)).cuda()).norm(dim=1).min().item()
-                    thumb_dist = (means - torch.from_numpy(np.array(thumb_position)).cuda()).norm(dim=1).min().item()
-                    closest_dist = (finger_dist + thumb_dist)/2
-                    if self.hand_lefts[frame_id][h_id]:
-                        left_part_dists[frame_id,g] = closest_dist
-                    else:
-                        right_part_dists[frame_id,g] = closest_dist
-        # Next brute force all hand-part assignments and pick the best one
-        assignments = []
-        for li in range(len(self.group_masks)):
-            for ri in range(len(self.group_masks)):
-                if li == ri:
-                    continue
-                dist = left_part_dists[:,li].sum() + right_part_dists[:,ri].sum()
-                assignments.append((li,ri,dist))
-        assignments.sort(key=lambda x: x[2])
-        return [(a[0],a[1]) for a in assignments]
 
     def reset_transforms(self):
         with torch.no_grad():
@@ -659,11 +557,11 @@ class RigidGroupOptimizer:
                 object_mask = self.render_mask(cam, obj_id)
             else: 
                 object_mask = self.frame._obj_masks[obj_id].squeeze(0)
-                # import pdb; pdb.set_trace()
+
             valids = torch.where(object_mask)
             valid_xs = valids[1]/object_mask.shape[1]
             valid_ys = valids[0]/object_mask.shape[0] # normalize to 0-1
-            # import pdb; pdb.set_trace()
+
             if cam is not None:
                 inflate_amnt = (
                     max((self.config.roi_inflate_proportion*(valid_xs.max() - valid_xs.min()).item()), (self.config.roi_inflate/cam.width.item())),
@@ -683,7 +581,7 @@ class RigidGroupOptimizer:
         """
         self.frame = frame
         
-    def set_observation(self, frame: PosedObservation, extrapolate_velocity = False, init_mask = False):
+    def set_observation(self, frame: PosedObservation):
         """
         Sets the rgb_frame to optimize the pose for
         rgb_frame: HxWxC tensor image
@@ -696,20 +594,3 @@ class RigidGroupOptimizer:
                 frame.add_roi(xmin, xmax, ymin, ymax)
         self.frame = frame
         
-        # if self.config.use_mask_loss:
-        #     if init_mask:
-        #         init_sam2(self.frame, self.pogs_model)
-        #     else:
-        #         propogate_sam2(self.frame)
-        #         for obj_id in range(len(self.frame._roi_frames)):
-        #             xmin, xmax, ymin, ymax = self.calculate_roi(obj_id)
-        #             self.frame.update_roi(obj_id, xmin, xmax, ymin, ymax)
-        # self.frame = frame
-        # if extrapolate_velocity and self.part_deltas.shape[0] > 1:
-        #     if (self.prev_part_deltas != self.part_deltas).any().item():
-        #         with torch.no_grad():
-        #             new_parts = extrapolate_poses(self.prev_part_deltas, self.part_deltas.data, 0.15)
-        #             self.part_deltas = torch.nn.Parameter(torch.cat([new_parts], dim=0))
-                    
-        #         replace_in_optim(self.part_optimizer, [self.part_deltas])
-        #         zero_optim_state(self.part_optimizer)
