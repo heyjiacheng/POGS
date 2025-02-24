@@ -37,7 +37,7 @@ The best way to install it is with pip: `pip install --extra-index-url=https://p
 
 3. Install POGS!
 ```
-git clone https://github.com/BerkeleyAutomation/pogs.git --recurse-submodules
+git clone https://github.com/uynitsuj/pogs.git --recurse-submodules
 cd pogs
 python -m pip install -e .
 
