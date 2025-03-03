@@ -24,8 +24,8 @@ Tested on Python 3.10, cuda 11.8, using conda.
 ## Installation
 1. Create conda environment and install relevant packages
 ```
-conda create --name pogs -y python=3.10
-conda activate pogs
+conda create --name pogs_env -y python=3.10
+conda activate pogs_env
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
