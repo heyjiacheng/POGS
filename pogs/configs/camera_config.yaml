@@ -1,0 +1,15 @@
+wrist_mounted_zed:
+  resolution: 720p
+  fps: 30
+  flip_mode: True
+  id: 16347230
+  gain: 27
+  exposure: 67
+
+third_view_zed:
+  resolution: 1080p
+  fps: 30
+  flip_mode: False
+  id: 22008760
+  gain: 31
+  exposure: 90

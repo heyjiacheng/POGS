@@ -4,3 +4,9 @@
 [submodule "pogs/dependencies/Detic"]
 	path = pogs/dependencies/Detic
 	url = https://github.com/facebookresearch/Detic.git
+[submodule "pogs/dependencies/ur5py"]
+	path = pogs/dependencies/ur5py
+	url = https://github.com/BerkeleyAutomation/ur5py
+[submodule "pogs/dependencies/raftstereo"]
+	path = pogs/dependencies/raftstereo
+	url = https://github.com/kerrj/RAFT-Stereo

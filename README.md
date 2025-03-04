@@ -43,3 +43,37 @@ python -m pip install -e .
 
 ns-install-cli
 ```
+
+4. There is also a physical robot action component with the UR5 and Zed cameras. To install the stuff relevant for that, do the following:
+### ur5py
+```
+pip install ur_rtde==1.4.2
+pip install cowsay
+pip install opt-einsum
+pip install pyvista
+pip install autolab-core
+cd ~/pogs/pogs/dependencies/ur5py
+pip install -e .
+```
+
+### RAFT-Stereo
+```
+cd ~/pogs/pogs/dependencies/raftstereo
+bash download_models.sh
+pip install -e .
+```
+
+## Usage
+### Calibrate wrist mounted and third person cameras
+Before training/tracking POGS, make sure wrist mounted camera and third-person view camera are calibrated. We use an Aruco marker for the calibration
+```
+cd ~/pogs/pogs/scripts
+python calibrate_cameras.py
+```
+
+### Scene Capture
+Script used to perform hemisphere capture with robot on tabletop scene. We used manual trajectory but you can also put the robot in "teach" mode to capture trajectory.
+```
+cd ~/pogs/pogs/scripts
+python scene_capture.py --scene DATA_NAME
+```

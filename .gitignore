@@ -41,3 +41,5 @@ outputs/*
 pogs/tracking/models/
 *.mp4
 *.ipynb
+.vscode/
+pogs/data/utils/datasets/
