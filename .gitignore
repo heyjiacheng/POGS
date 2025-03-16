@@ -43,3 +43,12 @@ pogs/tracking/models/
 *.ipynb
 .vscode/
 pogs/data/utils/datasets/
+pogs/calibration_outputs/world_to_extrinsic_zed.tf
+pogs/calibration_outputs/wrist_to_zed_mini.tf
+pogs/pogs/grasping/results
+pogs/results
+pogs/robot_description
+pogs/scripts/goto_click_extrinsic_cam.py
+pogs/scripts/goto_click_wrist_cam.py
+pogs/scripts/test_grasp_visualization.py
+pogs/scripts/results

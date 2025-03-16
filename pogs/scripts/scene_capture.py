@@ -606,7 +606,8 @@ def prime_sphere_main(scene_name, single_image=False, flip_table=False):
         print("Zed mini fps set to: ",
             cam.cam.get_camera_information().camera_configuration.fps
         )
-        
+        camera_parameters['wrist_mounted_zed']['gain'] = cam.cam.get_camera_settings(sl.VIDEO_SETTINGS.GAIN)[1]
+        camera_parameters['wrist_mounted_zed']['exposure'] = cam.cam.get_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE)[1]
         # Initialize external (third-view) ZED camera if using dual camera setup
         extrinsic_zed = None
         if use_2_cams:
@@ -628,7 +629,11 @@ def prime_sphere_main(scene_name, single_image=False, flip_table=False):
             print("Extrinsic Zed fps set to: ",
                 extrinsic_zed.cam.get_camera_information().camera_configuration.fps
             )
-        
+            camera_parameters['third_view_zed']['gain'] = extrinsic_zed.cam.get_camera_settings(sl.VIDEO_SETTINGS.GAIN)[1]
+            camera_parameters['third_view_zed']['exposure'] = extrinsic_zed.cam.get_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE)[1]
+
+        with open(config_filepath, 'w') as file:
+            yaml.dump(camera_parameters,file,default_flow_style=False)
     # Initialize global point cloud variables
     global_pointcloud = None
     global_rgbcloud = None

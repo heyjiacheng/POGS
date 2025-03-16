@@ -9,4 +9,7 @@
 	url = https://github.com/BerkeleyAutomation/ur5py
 [submodule "pogs/dependencies/raftstereo"]
 	path = pogs/dependencies/raftstereo
-	url = https://github.com/kerrj/RAFT-Stereo
+	url = https://github.com/kushtimusPrime/RAFT-Stereo
+[submodule "pogs/dependencies/contact_graspnet"]
+	path = pogs/dependencies/contact_graspnet
+	url = https://github.com/NVlabs/contact_graspnet.git
