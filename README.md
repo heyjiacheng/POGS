@@ -24,14 +24,13 @@ Tested on Python 3.10, cuda 11.8, using conda.
 ## Installation
 1. Create conda environment and install relevant packages
 ```
-pip uninstall nerfstudio
-pip uninstall gsplat
 conda create --name pogs_env -y python=3.10
 conda activate pogs_env
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 
 pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+pip install gsplat --index-url https://docs.gsplat.studio/whl/pt20cu118
 pip install warp-lang
 ```
 
@@ -47,23 +46,24 @@ pip install transformers==4.44.0
 pip install fast_simplification==0.1.9
 pip install numpy==1.26.4
 ```
+### Robot Interaction Code Installation (UR5 Specific)
 
 4. There is also a physical robot action component with the UR5 and Zed cameras. To install the stuff relevant for that, do the following:
-### ur5py
+#### ur5py
 ```
 pip install ur_rtde==1.4.2 cowsay opt-einsum pyvista autolab-core
 cd ~/pogs/pogs/dependencies/ur5py
 pip install -e .
 ```
 
-### RAFT-Stereo
+#### RAFT-Stereo
 ```
 cd ~/pogs/pogs/dependencies/raftstereo
 bash download_models.sh
 pip install -e .
 ```
 
-### Contact-Graspnet
+#### Contact-Graspnet
 Contact Graspnet relies on some older library setups, so we couldn't merge everything into 1 conda environment. However, we can make it work by making this separate conda environment and then calling it in a subprocess.
 ```
 conda deactivate
