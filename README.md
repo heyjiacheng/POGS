@@ -29,6 +29,7 @@ pip uninstall gsplat
 conda create --name pogs_env -y python=3.10
 conda activate pogs_env
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
+
 pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 pip install warp-lang
@@ -42,10 +43,6 @@ The best way to install it is with pip: `pip install --extra-index-url=https://p
 git clone https://github.com/uynitsuj/pogs.git --recurse-submodules
 cd pogs
 python -m pip install -e .
-
-ns-install-cli
-pip uninstall gsplat
-pip install git+https://github.com/nerfstudio-project/gsplat.git
 pip install transformers==4.44.0
 pip install fast_simplification==0.1.9
 pip install numpy==1.26.4
@@ -54,11 +51,7 @@ pip install numpy==1.26.4
 4. There is also a physical robot action component with the UR5 and Zed cameras. To install the stuff relevant for that, do the following:
 ### ur5py
 ```
-pip install ur_rtde==1.4.2
-pip install cowsay
-pip install opt-einsum
-pip install pyvista
-pip install autolab-core
+pip install ur_rtde==1.4.2 cowsay opt-einsum pyvista autolab-core
 cd ~/pogs/pogs/dependencies/ur5py
 pip install -e .
 ```
@@ -73,6 +66,7 @@ pip install -e .
 ### Contact-Graspnet
 Contact Graspnet relies on some older library setups, so we couldn't merge everything into 1 conda environment. However, we can make it work by making this separate conda environment and then calling it in a subprocess.
 ```
+conda deactivate
 conda create --name contact_graspnet_env python=3.8
 conda activate contact_graspnet_env
 conda install -c conda-forge cudatoolkit=11.2
@@ -81,25 +75,15 @@ conda install -c conda-forge cudnn=8.2
 conda install -c conda-forge cudatoolkit-dev
 export CUDA_HOME=/path/to/anaconda/envs/contact_graspnet_env/bin/nvcc
 pip install tensorflow==2.5 tensorflow-gpu==2.5
-pip install opencv-python-headless
-pip install pyyaml
-pip install pyrender
-pip install tqdm
-pip install mayavi
-pip install open3d==0.10.0
-pip install typing-extensions==3.7.4
-pip install trimesh==3.8.12
-pip install configobj==5.0.6
-pip install matplotlib==3.3.2
-pip install pyside2==5.11.0
-pip install scikit-image==0.19.0
-pip install numpy==1.19.2
-pip install scipy==1.9.1
-pip install vtk==9.3.1
-# if you have cuda installed at /usr/local/cuda run this line
+pip install opencv-python-headless pyyaml pyrender tqdm mayavi
+pip install open3d==0.10.0 typing-extensions==3.7.4 trimesh==3.8.12 configobj==5.0.6 matplotlib==3.3.2 pyside2==5.11.0 scikit-image==0.19.0 numpy==1.19.2 scipy==1.9.1 vtk==9.3.1
+# if you have cuda installed at /usr/local/cuda run these lines
+cd ~/pogs/pogs/dependencies/contact_graspnet
 sh compile_pointnet_tfops.sh
-# if you have cuda installed on your conda env run this line
+# if you have cuda installed on your conda env run these lines
+cd ~/pogs/pogs/configs
 cp conda_compile_pointnet_tfops.sh ~/pogs/pogs/dependencies/contact_graspnet/
+cd ~/pogs/pogs/dependencies/contact_graspnet
 sh conda_compile_pointnet_tfops.sh
 pip install autolab-core
 ```
@@ -117,6 +101,7 @@ Download the test data from [here](https://drive.google.com/drive/folders/1TqpM2
 ### Calibrate wrist mounted and third person cameras
 Before training/tracking POGS, make sure wrist mounted camera and third-person view camera are calibrated. We use an Aruco marker for the calibration
 ```
+conda activate pogs_env
 cd ~/pogs/pogs/scripts
 python calibrate_cameras.py
 ```
@@ -124,6 +109,7 @@ python calibrate_cameras.py
 ### Scene Capture
 Script used to perform hemisphere capture with robot on tabletop scene. We used manual trajectory but you can also put the robot in "teach" mode to capture trajectory.
 ```
+conda activate pogs_env
 cd ~/pogs/pogs/scripts
 python scene_capture.py --scene DATA_NAME
 ```
@@ -131,6 +117,8 @@ python scene_capture.py --scene DATA_NAME
 ### Train POGS
 Script used to train the POGS for 4000 steps
 ```
+conda activate pogs_env
+cd ~/pogs
 ns-train pogs --data /path/to/data/folder
 ```
 Once the POGS has completed training, there are N steps to then actually define/save the object clusters.
@@ -148,6 +136,7 @@ Once you have trained the POGS, make sure you have the config file and checkpoin
 ### Run POGS for grasping
 Script for letting you use a POGS to track an object online and grasp it.
 ```
-cd ~/pogs/pogs/data/utils/datasets
+conda activate pogs_env
+cd ~/pogs
 python ~/pogs/pogs/scripts/track_main_online_demo.py --config_path /path/to/config/yml
 ```
