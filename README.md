@@ -48,7 +48,7 @@ pip install numpy==1.26.4
 ```
 ### Robot Interaction Code Installation (UR5 Specific)
 
-4. There is also a physical robot action component with the UR5 and Zed cameras. To install the stuff relevant for that, do the following:
+There is also a physical robot component with the UR5 and ZED 2 cameras. To install relevant libraries:
 #### ur5py
 ```
 pip install ur_rtde==1.4.2 cowsay opt-einsum pyvista autolab-core
@@ -94,9 +94,6 @@ Download trained models from [here](https://drive.google.com/drive/folders/1tBHK
 ##### Test data
 Download the test data from [here](https://drive.google.com/drive/folders/1TqpM2wHAAo0j3i1neu3Xeru3_WnsYQnx?usp=sharing) and copy them them into the `test_data/` folder.
 
-
-
-
 ## Usage
 ### Calibrate wrist mounted and third person cameras
 Before training/tracking POGS, make sure wrist mounted camera and third-person view camera are calibrated. We use an Aruco marker for the calibration
@@ -118,7 +115,6 @@ python scene_capture.py --scene DATA_NAME
 Script used to train the POGS for 4000 steps
 ```
 conda activate pogs_env
-cd ~/pogs
 ns-train pogs --data /path/to/data/folder
 ```
 Once the POGS has completed training, there are N steps to then actually define/save the object clusters.
@@ -137,6 +133,5 @@ Once you have trained the POGS, make sure you have the config file and checkpoin
 Script for letting you use a POGS to track an object online and grasp it.
 ```
 conda activate pogs_env
-cd ~/pogs
 python ~/pogs/pogs/scripts/track_main_online_demo.py --config_path /path/to/config/yml
 ```
