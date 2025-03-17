@@ -3,6 +3,7 @@ from typing import List, Optional, Union
 import torch
 import numpy as np
 import trimesh
+import json
 import trimesh.bounds
 import trimesh.repair
 import trimesh.creation
@@ -18,8 +19,9 @@ import sys
 import subprocess
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
-grasp_ply_filepath = os.path.join(dir_path,'../ur5_interface/ur5_interface/scripts')
-sys.path.append(grasp_ply_filepath)
+
+grasp_ply_folder_path = os.path.join(dir_path,'../grasping')
+sys.path.append(grasp_ply_folder_path)
 
 @dataclasses.dataclass(frozen=True) #, kw_only=True)
 class ToadObject:
@@ -102,10 +104,12 @@ class ToadObject:
         table_bounding_box_path: str,
         save_dir: str
     ):
-        contact_graspnet_env_path = "/home/lifelong/anaconda3/envs/contact_graspnet/bin/python"
-        generate_grasps_path = "/home/lifelong/sms/sms/ur5_interface/ur5_interface/scripts/generate_grasp_ply.py"
+        # Make sure this path is set to your contact_graspnet_env
+        contact_graspnet_env_path = os.path.join(dir_path,'../../../anaconda3/envs/contact_graspnet_env/bin/python')
+        generate_grasps_path = os.path.join(dir_path,'../grasping/generate_grasps_ply.py')
         print(contact_graspnet_env_path + " " + generate_grasps_path + ' --seg_np_path ' + seg_np_path + ' --full_np_path ' + full_np_path + ' --pc_bounding_box_path ' + table_bounding_box_path + ' --save_dir ' + save_dir)
         result = subprocess.run([contact_graspnet_env_path, generate_grasps_path, "--seg_np_path", seg_np_path, "--full_np_path", full_np_path, "--pc_bounding_box_path", table_bounding_box_path, "--save_dir", save_dir], capture_output=True, text=True)
+        print(result.stdout)
         print("Successfully generated grasps")
     
     @staticmethod

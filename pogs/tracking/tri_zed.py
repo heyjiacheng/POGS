@@ -169,7 +169,7 @@ class Zed():
     cam_to_zed: RigidTransform
     """Transform from left camera to ZED camera base."""
 
-    def __init__(self, cam_id=None, recording_file = None, start_time = 0.0, is_res_1080=False):
+    def __init__(self, flip_mode, resolution, fps, cam_id=None, recording_file=None, start_time=0.0):
         init = sl.InitParameters()
         if cam_id is not None:
             init.set_from_serial_number(cam_id)
@@ -177,37 +177,41 @@ class Zed():
         self.width = None
         self.debug_ = False
         self.height = None
+        self.init_res = None
+        # Set camera flip mode
+        if flip_mode:
+            init.camera_image_flip = sl.FLIP_MODE.ON
+        else:
+            init.camera_image_flip = sl.FLIP_MODE.OFF
+            
         if recording_file is not None:
             init.set_from_svo_file(recording_file)
-            # disable depth
-            init.camera_image_flip = sl.FLIP_MODE.ON
-            init.depth_mode=sl.DEPTH_MODE.NONE
-            init.camera_resolution = sl.RESOLUTION.HD1080
-            init.sdk_verbose = 1
-            init.camera_fps = 30
-            self.width = 1920
-            self.height = 1080
-        elif is_res_1080:
-            init.camera_image_flip = sl.FLIP_MODE.OFF
-            init.depth_mode=sl.DEPTH_MODE.NONE
-            init.camera_resolution = sl.RESOLUTION.HD1080
-            init.sdk_verbose = 1
-            init.camera_fps = 30
-            self.width = 1920
-            self.height = 1080
-        else:
+            
+        # Configure camera resolution
+        if resolution == '720p':
             init.camera_resolution = sl.RESOLUTION.HD720
-            init.sdk_verbose = 1
-            init.camera_fps = 30
-            # flip camera
-            # init.camera_image_flip = sl.FLIP_MODE.ON
-            init.depth_mode=sl.DEPTH_MODE.NONE
-            init.depth_minimum_distance = 100#millimeters
-            self.width = 1280
             self.height = 720
-        self.init_res = 1920 if init.camera_resolution == sl.RESOLUTION.HD1080 else 1280
-        print("INIT RES",self.init_res)
+            self.width = 1280
+            self.init_res = 1280
+        elif resolution == '1080p':
+            init.camera_resolution = sl.RESOLUTION.HD1080
+            self.height = 1080
+            self.width = 1920
+            self.init_res = 1920
+        elif resolution == '2k':
+            init.camera_resolution = sl.RESOLUTION.HD2k
+            self.height = 1242
+            self.width = 2208
+            self.init_res = 2208
+        else:
+            print("Only 720p, 1080p, and 2k supported by Zed")
+            exit()
+        # Disable native ZED depth computation (we'll use RAFT-Stereo instead)
+        init.depth_mode = sl.DEPTH_MODE.NONE
+        init.sdk_verbose = 1
+        init.camera_fps = fps
         self.cam = sl.Camera()
+        init.camera_disable_self_calib = True
         status = self.cam.open(init)
         if recording_file is not None:
             fps = self.cam.get_camera_information().camera_configuration.fps
@@ -235,15 +239,13 @@ class Zed():
         # Create lock for raft -- gpu threading messes up CUDA memory state, with curobo...
         self.raft_lock = Lock()
         self.dir_path = pathlib.Path(__file__).parent.resolve()
-        self.stereo_ckpt = os.path.join(self.dir_path,'models/stereo_20230724.pt')
+        self.stereo_ckpt = os.path.join(self.dir_path,'models/stereo_20230724.pt') #We use stereo model from this paper: https://arxiv.org/abs/2109.11644. However, you can sub this in for any realtime stereo model (including the default Zed model).
         with self.raft_lock:
             self.model = StereoModel(self.stereo_ckpt)
 
         # left_cx = self.get_K(cam='left')[0,2]
         # right_cx = self.get_K(cam='right')[0,2]
         # self.cx_diff = (right_cx-left_cx)
-        
-        self.cam_type = 'ZEDMini'
         
 
         
