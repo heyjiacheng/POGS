@@ -1,5 +1,4 @@
-# POGS 
-## Persistent Object Gaussian Splat for Tracking Human and Robot Manipulation of Irregularly Shaped Objects
+## Persistent Object Gaussian Splat (POGS) for Tracking Human and Robot Manipulation of Irregularly Shaped Objects
 
 <div align="center">
 
