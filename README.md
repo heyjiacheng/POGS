@@ -134,3 +134,15 @@ Script for letting you use a POGS to track an object online and grasp it.
 conda activate pogs_env
 python ~/pogs/pogs/scripts/track_main_online_demo.py --config_path /path/to/config/yml
 ```
+
+
+## Bibtex
+If you find POGS useful for your work please consider citing:
+```
+@article{yu2025pogs,
+  author    = {Yu, Justin and Hari, Kush and El-Refai, Karim and Dalil, Arnav and Kerr, Justin and Kim, Chung-Min and Cheng, Richard, and Irshad, Muhammad Z. and Goldberg, Ken},
+  title     = {Persistent Object Gaussian Splat (POGS) for Tracking Human and Robot Manipulation of Irregularly Shaped Objects},
+  journal   = {ICRA},
+  year      = {2025},
+}
+```
