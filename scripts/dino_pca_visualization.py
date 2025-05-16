@@ -18,7 +18,7 @@ from typing import Tuple
 
 def main(
     image_path: str = "shelf_iron.png",
-    dino_model_type: str = "dinov2_vits14",
+    dino_model_type: str = "dinov2_vitl14",
     dino_stride: int = 14,
     device: str = "cuda",
     keep_cuda: bool = True,

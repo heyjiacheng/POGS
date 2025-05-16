@@ -14,6 +14,7 @@ dependencies=[
     "autolab_core",
     "moviepy",
     "kornia",
+    "iopath",
 ]
 [tool.setuptools]
 include-package-data = true

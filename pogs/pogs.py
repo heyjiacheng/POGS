@@ -71,7 +71,7 @@ def generate_random_colors(N=5000) -> torch.Tensor:
     rgb = cv2.cvtColor((hsv * 255).astype(np.uint8)[None, ...], cv2.COLOR_HSV2RGB)
     return torch.Tensor(rgb.squeeze() / 255.0)
 
-@torch.compile()
+# @torch.compile()
 def get_viewmat(optimized_camera_to_world):
     """
     function that converts c2w to gsplat world2camera matrix, using compile for some speed
@@ -97,7 +97,7 @@ class POGSModelConfig(SplatfactoModelConfig):
     """if a gaussian is more than this percent of screen space, split it"""
     random_init: bool = False
     """whether to initialize the positions uniformly randomly (not SFM points)"""
-    clip_loss_weight: float = 0.1
+    clip_loss_weight: float = 0.5
     """weight of clip loss"""
     output_depth_during_training: bool = True
     """If True, output depth during training. Otherwise, only output depth during evaluation."""
@@ -111,11 +111,16 @@ class POGSModelConfig(SplatfactoModelConfig):
     """How much to upscale rendered dino for supervision"""
     min_mask_screensize: float = 0.003
     """Minimum screen size of masks to use for supervision"""
-    depth_loss_mult: float = 0.001
+    depth_loss_mult: float = 0.05
     """Lambda of the depth loss."""
-    depth_loss_type: DepthLossType = DepthLossType.MSE
+    depth_loss_type: DepthLossType = DepthLossType.PEARSON_LOSS
     """Depth loss type."""
     num_downscales: int = 0
+    use_scale_regularization: bool = True
+    """If enabled, a scale regularization introduced in PhysGauss (https://xpandora.github.io/PhysGaussian/) is used for reducing huge spikey gaussians."""
+    max_gauss_ratio: float = 3.0
+    """threshold of ratio of gaussian max to min scale before applying regularization"""
+    
 
 class POGSModel(SplatfactoModel):
 
@@ -172,7 +177,7 @@ class POGSModel(SplatfactoModel):
         self.temp_opacities = None
         self.frame_on_word = ViewerButton("Best Guess", cb_hook=self.localize_query_cb)
         self.relevancy_thresh = ViewerSlider("Relevancy Thresh", 0.0, 0, 1.0, 0.01)
-        self.cluster_eps = ViewerSlider("Cluster Eps", 0.02, 0.005, 0.1, 0.005)
+        self.cluster_eps = ViewerSlider("Cluster Eps", 0.012, 0.005, 0.1, 0.005)
         
 
     def load_state_dict(self, dict, **kwargs):  # type: ignore
@@ -447,23 +452,23 @@ class POGSModel(SplatfactoModel):
 
                     outputs["instance"] = field_output[GaussianFieldHeadNames.INSTANCE].to(dtype=torch.float32)
 
-                if camera.metadata is not None:
-                    if "clip_downscale_factor" not in camera.metadata and not rgb_only:
-                        # N x B x 1; N
-                        max_across, self.best_scales, instances_out = self.get_max_across(means_crop, quats_crop, scales_crop, opacities_crop, viewmat, K, H, W, preset_scales=None)
+                # if camera.metadata is not None:
+                #     if "clip_downscale_factor" not in camera.metadata and not rgb_only:
+                #         # N x B x 1; N
+        max_across, self.best_scales, instances_out = self.get_max_across(means_crop, quats_crop, scales_crop, opacities_crop, viewmat, K, H, W, preset_scales=None)
 
-                        if not torch.isnan(instances_out).any():
-                            outputs["group_feats"] = instances_out
-                        else:
-                            print("instance loss may be nan")
+        if not torch.isnan(instances_out).any():
+            outputs["group_feats"] = instances_out
+        else:
+            print("instance loss may be nan")
 
-                        if not hasattr(self, "image_encoder"): # Await Load
-                            if not hasattr(self.image_encoder, "positives"):
-                                time.sleep(0.2)
-                                
-                        for i in range(len(self.image_encoder.positives)):
-                            max_across[i][max_across[i] < self.relevancy_thresh.value] = 0
-                            outputs[f"relevancy_{i}"] = max_across[i].view(H, W, -1)
+        if not hasattr(self, "image_encoder"): # Await Load
+            if not hasattr(self.image_encoder, "positives"):
+                time.sleep(0.2)
+                
+        for i in range(len(self.image_encoder.positives)):
+            max_across[i][max_across[i] < self.relevancy_thresh.value] = 0
+            outputs[f"relevancy_{i}"] = max_across[i].view(H, W, -1)
 
         # DINO stuff
         if (self.step - self.datamanager.dino_step > 0) or tracking:

@@ -194,6 +194,8 @@ class POGSPipeline(VanillaPipeline):
         self.add_crop_to_group_list = ViewerButton(name="Add Crop to Group List", cb_hook=self._add_crop_to_group_list, disabled=True)
         self.add_crop_to_previous_group = ViewerButton(name="Add Crop to Previous Group", cb_hook=self._add_crop_to_previous_group, disabled=True)
         self.view_crop_group_list = ViewerButton(name="View Crop Group List", cb_hook=self._view_crop_group_list, disabled=True)
+        
+        self.load_state = ViewerButton(name="Load State", cb_hook=self._load_state, disabled=False)
         self.crop_group_list = []
         self.crop_group_tf_list = []
         self.model_keep_inds = None
@@ -458,7 +460,7 @@ class POGSPipeline(VanillaPipeline):
         table_bounding_cube_filename = self.datamanager.get_datapath().joinpath("table_bounding_cube.json")
         with open(table_bounding_cube_filename, 'r') as json_file: 
             bounding_box_dict = json.load(json_file)
-        table_z_val = bounding_box_dict['table_height'] - 0.01 # Removes everything below this value to represent the table and anything below. Found 0.008 to be good value for this
+        table_z_val = bounding_box_dict['table_height'] + 0.015 #- 0.01 # Removes everything below this value to represent the table and anything below. Found 0.008 to be good value for this
         # table_z_val = -0.165 # z value of the table to filter out of our clusters
         keep_list = [keep_list[0][torch.where(curr_means[keep_list[0]][:,2] > table_z_val)[0].cpu()]] # filter out table points
         # Remove the click handle + visualization
@@ -605,6 +607,40 @@ class POGSPipeline(VanillaPipeline):
             np.save(filename, np.array([self.model.cluster_labels, self.model.keep_inds, self.cgtf_stack], dtype=object))
         else:
             print("No cluster labels to export")
+            
+    def _load_state(self, button: ViewerButton):
+        """Load the state from a .npy file"""
+        
+        # add to state stack
+        self.state_stack.append(self.model.gauss_params)
+        output_dir = f"outputs/{self.datamanager.config.dataparser.data.name}"
+        filename = Path(output_dir) / f"clusters.npy"
+        if filename.exists():
+            data = np.load(filename, allow_pickle=True)
+            self.model.cluster_labels = data[0]
+            self.model.keep_inds = data[1]
+            self.cgtf_stack = data[2]
+        else:
+            print("No state to load")
+        
+        # Update the crop group list
+        self.crop_group_list = []
+        self.crop_group_tf_list = []
+        for i in range(len(self.cgtf_stack)):
+            self.crop_group_list.append(self.model.keep_inds)
+            self.crop_group_tf_list.append(self.cgtf_stack[i])
+        
+        # View the crop group list
+        keep_inds = []
+        for inds in self.crop_group_list:
+            keep_inds.extend(inds)
+        keep_inds = torch.stack(keep_inds)
+        prev_state = self.state_stack[-1]
+        for name in self.model.gauss_params.keys():
+            self.model.gauss_params[name] = prev_state[name][keep_inds]
+        self.model.keep_inds = keep_inds
+        
+        
     
     def _export_visible_gaussians(self, button: ViewerButton):
         """Export the visible gaussians to a .ply file"""
