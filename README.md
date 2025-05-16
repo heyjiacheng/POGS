@@ -29,6 +29,7 @@ conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 
 pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+pip install jaxtyping rich
 pip install gsplat --index-url https://docs.gsplat.studio/whl/pt20cu118
 pip install warp-lang
 ```
@@ -38,8 +39,8 @@ The best way to install it is with pip: `pip install --extra-index-url=https://p
 
 3. Install POGS!
 ```
-git clone https://github.com/uynitsuj/pogs.git --recurse-submodules
-cd pogs
+git clone https://github.com/uynitsuj/POGS.git --recurse-submodules
+cd POGS
 python -m pip install -e .
 pip install transformers==4.44.0
 pip install fast_simplification==0.1.9
