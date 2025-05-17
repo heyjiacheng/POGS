@@ -27,7 +27,7 @@ pogs_method = MethodSpecification(
         gradient_accumulation_steps = {'camera_opt': 100,'color':10,'shs':10, 'lerf': 3},  
         pipeline=POGSPipelineConfig(
             datamanager=FullImageDatamanagerConfig(
-                _target=FullImageDatamanager[DepthDataset],
+                _target=FullImageDatamanager[DepthDataset], # Comment out the [DepthDataset] part to use RGB only datasets (e.g. polycam datasets)
                 dataparser=NerfstudioDataParserConfig(load_3D_points=True, orientation_method='none', center_method='none', auto_scale_poses=False, depth_unit_scale_factor=1.0),
                 network=OpenCLIPNetworkConfig(
                     clip_model_type="ViT-B-16", clip_model_pretrained="laion2b_s34b_b88k", clip_n_dims=512, device='cuda:0'

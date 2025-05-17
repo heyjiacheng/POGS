@@ -9,15 +9,14 @@ dependencies=[
     "rich",
     "open-clip-torch",
     "numpy==1.26.4",
-    # "nerfstudio>=1.1.1",
     "torchtyping",
     "autolab_core",
     "moviepy",
     "kornia",
     "iopath",
     "transformers==4.44.0",
-    "fast_simplification==0.1.9",
-    "numpy==1.26.4"
+    "typeguard>=4.0.0",
+    "awscli"
 ]
 [tool.setuptools]
 include-package-data = true

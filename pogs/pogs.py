@@ -120,7 +120,8 @@ class POGSModelConfig(SplatfactoModelConfig):
     """If enabled, a scale regularization introduced in PhysGauss (https://xpandora.github.io/PhysGaussian/) is used for reducing huge spikey gaussians."""
     max_gauss_ratio: float = 3.0
     """threshold of ratio of gaussian max to min scale before applying regularization"""
-    
+    # max_gs_num: int = 30_000
+    # """Maximum number of GSs. Default to 1_000_000."""
 
 class POGSModel(SplatfactoModel):
 
@@ -452,23 +453,23 @@ class POGSModel(SplatfactoModel):
 
                     outputs["instance"] = field_output[GaussianFieldHeadNames.INSTANCE].to(dtype=torch.float32)
 
-                # if camera.metadata is not None:
-                #     if "clip_downscale_factor" not in camera.metadata and not rgb_only:
-                #         # N x B x 1; N
-        max_across, self.best_scales, instances_out = self.get_max_across(means_crop, quats_crop, scales_crop, opacities_crop, viewmat, K, H, W, preset_scales=None)
+                if camera.metadata is not None:
+                    if "clip_downscale_factor" not in camera.metadata and not rgb_only:
+                        # N x B x 1; N
+                        max_across, self.best_scales, instances_out = self.get_max_across(means_crop, quats_crop, scales_crop, opacities_crop, viewmat, K, H, W, preset_scales=None)
 
-        if not torch.isnan(instances_out).any():
-            outputs["group_feats"] = instances_out
-        else:
-            print("instance loss may be nan")
+                        if not torch.isnan(instances_out).any():
+                            outputs["group_feats"] = instances_out
+                        else:
+                            print("instance loss may be nan")
 
-        if not hasattr(self, "image_encoder"): # Await Load
-            if not hasattr(self.image_encoder, "positives"):
-                time.sleep(0.2)
-                
-        for i in range(len(self.image_encoder.positives)):
-            max_across[i][max_across[i] < self.relevancy_thresh.value] = 0
-            outputs[f"relevancy_{i}"] = max_across[i].view(H, W, -1)
+                        if not hasattr(self, "image_encoder"): # Await Load
+                            if not hasattr(self.image_encoder, "positives"):
+                                time.sleep(0.2)
+                                
+                        for i in range(len(self.image_encoder.positives)):
+                            max_across[i][max_across[i] < self.relevancy_thresh.value] = 0
+                            outputs[f"relevancy_{i}"] = max_across[i].view(H, W, -1)
 
         # DINO stuff
         if (self.step - self.datamanager.dino_step > 0) or tracking:

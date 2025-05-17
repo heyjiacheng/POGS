@@ -36,14 +36,17 @@ pip install warp-lang
 ```
 
 2. [`cuml`](https://docs.rapids.ai/install) is required (for global clustering).
-The best way to install it is with pip: `pip install --extra-index-url=https://pypi.nvidia.com cudf-cu11==25.4.* cuml-cu11==25.4.*`.
+The best way to install it is with pip: `pip install --extra-index-url=https://pypi.nvidia.com cudf-cu11==25.4.* cuml-cu11==25.4.*`
 
 3. Install POGS!
 ```
 git clone https://github.com/uynitsuj/POGS.git --recurse-submodules
 cd POGS
 python -m pip install -e .
-python -m pip install -e pogs/dependencies/nerfstudio/
+python -m pip install pogs/dependencies/nerfstudio/
+pip install fast_simplification==0.1.9
+pip install numpy==1.26.4
+ns-install-cli
 ```
 ### Robot Interaction Code Installation (UR5 Specific)
 
@@ -51,13 +54,12 @@ There is also a physical robot component with the UR5 and ZED 2 cameras. To inst
 #### ur5py
 ```
 pip install ur_rtde==1.4.2 cowsay opt-einsum pyvista autolab-core
-cd ~/pogs/pogs/dependencies/ur5py
-pip install -e .
+pip install -e /pogs/dependencies/ur5py
 ```
 
 #### RAFT-Stereo
 ```
-cd ~/pogs/pogs/dependencies/raftstereo
+cd ~/POGS/pogs/dependencies/raftstereo
 bash download_models.sh
 pip install -e .
 ```
@@ -77,12 +79,12 @@ pip install tensorflow==2.5 tensorflow-gpu==2.5
 pip install opencv-python-headless pyyaml pyrender tqdm mayavi
 pip install open3d==0.10.0 typing-extensions==3.7.4 trimesh==3.8.12 configobj==5.0.6 matplotlib==3.3.2 pyside2==5.11.0 scikit-image==0.19.0 numpy==1.19.2 scipy==1.9.1 vtk==9.3.1
 # if you have cuda installed at /usr/local/cuda run these lines
-cd ~/pogs/pogs/dependencies/contact_graspnet
+cd ~/POGS/pogs/dependencies/contact_graspnet
 sh compile_pointnet_tfops.sh
 # if you have cuda installed on your conda env run these lines
-cd ~/pogs/pogs/configs
+cd ~/POGS/pogs/configs
 cp conda_compile_pointnet_tfops.sh ~/pogs/pogs/dependencies/contact_graspnet/
-cd ~/pogs/pogs/dependencies/contact_graspnet
+cd ~/POGS/pogs/dependencies/contact_graspnet
 sh conda_compile_pointnet_tfops.sh
 pip install autolab-core
 ```
@@ -98,7 +100,7 @@ Download the test data from [here](https://drive.google.com/drive/folders/1TqpM2
 Before training/tracking POGS, make sure wrist mounted camera and third-person view camera are calibrated. We use an Aruco marker for the calibration
 ```
 conda activate pogs_env
-cd ~/pogs/pogs/scripts
+cd ~/POGS/pogs/scripts
 python calibrate_cameras.py
 ```
 
@@ -106,7 +108,7 @@ python calibrate_cameras.py
 Script used to perform hemisphere capture with robot on tabletop scene. We used manual trajectory but you can also put the robot in "teach" mode to capture trajectory.
 ```
 conda activate pogs_env
-cd ~/pogs/pogs/scripts
+cd ~/POGS/pogs/scripts
 python scene_capture.py --scene DATA_NAME
 ```
 
@@ -132,9 +134,8 @@ Once you have trained the POGS, make sure you have the config file and checkpoin
 Script for letting you use a POGS to track an object online and grasp it.
 ```
 conda activate pogs_env
-python ~/pogs/pogs/scripts/track_main_online_demo.py --config_path /path/to/config/yml
+python ~/POGS/pogs/scripts/track_main_online_demo.py --config_path /path/to/config/yml
 ```
-
 
 ## Bibtex
 If you find POGS useful for your work please consider citing:
