@@ -13,3 +13,6 @@
 [submodule "pogs/dependencies/contact_graspnet"]
 	path = pogs/dependencies/contact_graspnet
 	url = https://github.com/NVlabs/contact_graspnet.git
+[submodule "pogs/dependencies/nerfstudio"]
+	path = pogs/dependencies/nerfstudio
+	url = https://github.com/nerfstudio-project/nerfstudio.git

@@ -27,7 +27,8 @@ conda create --name pogs_env -y python=3.10
 conda activate pogs_env
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 
-pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu118
+
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 pip install jaxtyping rich
 pip install gsplat --index-url https://docs.gsplat.studio/whl/pt20cu118
@@ -35,16 +36,14 @@ pip install warp-lang
 ```
 
 2. [`cuml`](https://docs.rapids.ai/install) is required (for global clustering).
-The best way to install it is with pip: `pip install --extra-index-url=https://pypi.nvidia.com cudf-cu11==24.2.* cuml-cu11==24.2.*`.
+The best way to install it is with pip: `pip install --extra-index-url=https://pypi.nvidia.com cudf-cu11==25.4.* cuml-cu11==25.4.*`.
 
 3. Install POGS!
 ```
 git clone https://github.com/uynitsuj/POGS.git --recurse-submodules
 cd POGS
 python -m pip install -e .
-pip install transformers==4.44.0
-pip install fast_simplification==0.1.9
-pip install numpy==1.26.4
+python -m pip install -e pogs/dependencies/nerfstudio/
 ```
 ### Robot Interaction Code Installation (UR5 Specific)
 
