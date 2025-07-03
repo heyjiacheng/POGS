@@ -52,3 +52,6 @@ pogs/scripts/goto_click_extrinsic_cam.py
 pogs/scripts/goto_click_wrist_cam.py
 pogs/scripts/test_grasp_visualization.py
 pogs/scripts/results
+# pixi environments
+.pixi
+*.egg-info

@@ -1,8 +1,8 @@
 [project]
-name = "pogs"
-version = "0.1.1"
-requires-python = ">=3.10"
-
+authors = [{name = "heyjiacheng", email = "your_xujiacheng1016@hotmail.com"}]
+name = "POGS"
+requires-python = ">= 3.10"
+version = "0.1.0"
 dependencies=[
     "Pillow",
     "jaxtyping",
@@ -16,8 +16,10 @@ dependencies=[
     "iopath",
     "transformers==4.44.0",
     "typeguard>=4.0.0",
-    "awscli"
+    "awscli",
+    "pyrealsense2"
 ]
+
 [tool.setuptools]
 include-package-data = true
 
@@ -26,3 +28,38 @@ include = ["pogs*"]
 
 [project.entry-points.'nerfstudio.method_configs']
 pogs = 'pogs.pogs_config:pogs_method'
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["nvidia/label/cuda-11.8.0", "conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.pypi-dependencies]
+pogs = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+build = """
+pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu118 &&
+pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch &&
+pip install jaxtyping rich &&
+pip install gsplat --index-url https://docs.gsplat.studio/whl/pt20cu118 &&
+pip install warp-lang &&
+pip install --extra-index-url=https://pypi.nvidia.com "cudf-cu11==25.4.*" "cuml-cu11==25.4.*" &&
+python -m pip install -e . &&
+python -m pip install pogs/dependencies/nerfstudio/ &&
+pip install fast_simplification==0.1.7 &&
+ns-install-cli &&
+pip install ur_rtde==1.4.2 cowsay opt-einsum pyvista autolab-core &&
+pip install -e ./pogs/dependencies/ur5py &&
+cd ./pogs/dependencies/raftstereo &&
+bash download_models.sh &&
+pip install -e .
+"""
+
+[tool.pixi.dependencies]
+python = "3.10.*"
+pip = "*"
+cuda-toolkit = ">=11.8.0,<12"
