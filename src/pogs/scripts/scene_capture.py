@@ -12,6 +12,7 @@ import open3d as o3d
 import json
 from tqdm import tqdm
 import pyrealsense2 as rs
+from sklearn.cluster import DBSCAN
 
 # ===============================
 # Setup paths and transformation
@@ -112,9 +113,9 @@ def generate_pointcloud(depth, intrinsics):
 # ===============================
 
 def setup_directories(scene_name):
-    """Create directory structure for saving data"""
+    """Create directory structure for saving data (matching original structure)"""
     dirs = {
-        "rgb": os.path.join(HOME_DIR, scene_name, "rgb"),
+        "rgb": os.path.join(HOME_DIR, scene_name, "img"),  # Match original 'img' naming
         "depth": os.path.join(HOME_DIR, scene_name, "depth"),
         "poses": os.path.join(HOME_DIR, scene_name, "poses"),
         "scene": os.path.join(HOME_DIR, scene_name)
@@ -153,7 +154,7 @@ def save_transforms_json(save_dirs, intrinsics_list, scene_name):
         
         frame_data = intrinsics.copy()
         frame_data.update({
-            "file_path": f"rgb/frame_{i+1:05d}.png",
+            "file_path": f"img/frame_{i+1:05d}.png",  # Match original 'img' naming
             "depth_file_path": f"depth/frame_{i+1:05d}.npy",
             "transform_matrix": transform_matrix.tolist()
         })
@@ -166,6 +167,70 @@ def clear_tcp(robot):
     """Clear robot TCP settings"""
     tcp = RigidTransform(translation=np.array([0, 0, 0]), from_frame='tool', to_frame='wrist')
     robot.set_tcp(tcp)
+
+# ===============================
+# Table Detection Function (adapted from original)
+# ===============================
+
+def detect_table_boundaries(camera, camera_pose):
+    """
+    Detect table boundaries using plane segmentation (adapted for RealSense)
+    
+    Args:
+        camera: RealSense camera object
+        camera_pose: Camera pose transform
+        
+    Returns:
+        Table boundary coordinates and height
+    """
+    # Get RGB and depth data
+    color, depth = camera.get_rgb_depth()
+    pc = generate_pointcloud(depth, camera.intrinsics)
+    
+    # Transform to world frame
+    pc_world = camera_pose * pc
+    
+    # Use Open3D to segment the plane (table)
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pc_world.data.T)
+    plane_model, inliers = pcd.segment_plane(
+        distance_threshold=0.01, ransac_n=3, num_iterations=1000
+    )
+    
+    # Cluster points on the table plane
+    table_points = pc_world.data.T[inliers]
+    db = DBSCAN(eps=0.02, min_samples=20).fit(table_points)
+    label_set = set(db.labels_)
+    label_set.discard(-1)
+    
+    # Find the largest cluster and determine table boundaries
+    max_size = 0
+    x_min_world = y_min_world = z_min_world = 0
+    x_max_world = y_max_world = z_max_world = 0
+    
+    for label in label_set:
+        filtered_table_point_mask = db.labels_ == label
+        filtered_table_pointcloud = table_points[filtered_table_point_mask]
+        
+        if len(filtered_table_pointcloud) > max_size:
+            max_size = len(filtered_table_pointcloud)
+            x_min_world = np.min(filtered_table_pointcloud[:, 0])
+            x_max_world = np.max(filtered_table_pointcloud[:, 0])
+            y_min_world = np.min(filtered_table_pointcloud[:, 1])
+            y_max_world = np.max(filtered_table_pointcloud[:, 1])
+            z_min_world = np.min(filtered_table_pointcloud[:, 2])
+            z_max_world = np.max(filtered_table_pointcloud[:, 2])
+    
+    # Ensure min < max
+    if x_min_world > x_max_world:
+        x_min_world, x_max_world = x_max_world, x_min_world
+    if y_min_world > y_max_world:
+        y_min_world, y_max_world = y_max_world, y_min_world
+    if z_min_world > z_max_world:
+        z_min_world, z_max_world = z_max_world, z_min_world
+    
+    table_height = -plane_model[3]
+    return x_min_world, x_max_world, y_min_world, y_max_world, z_min_world, z_max_world, table_height
 
 # ===============================
 # Main Scene Capture Function
@@ -199,7 +264,7 @@ def main(scene_name="realsense_scene"):
     clear_tcp(robot)
     
     # Move to home position
-    home_joints = np.array([0.11, -2.23, 1.38, -0.71, -1.56, 1.68])
+    home_joints = np.array([0.11, -2.0, 1.2394, -0.75074, -1.64462, 3.29472])
     robot.move_joint(home_joints, vel=1.0, acc=0.1)
     robot.gripper.open()
     print("✓ Robot initialized and moved to home position")
@@ -270,8 +335,18 @@ def main(scene_name="realsense_scene"):
     static_pose = save_pose_nerf(world_to_d405, 0, save_dirs["poses"])
     intrinsics_list.append(third_cam.get_ns_intrinsics())
     
-    # Load trajectory
-    trajectory_path = os.path.join(calibration_save_path, "realsense_calibration_trajectory.npy")
+    # Detect table boundaries using wrist camera
+    print("Detecting table boundaries...")
+    wrist_pose = robot.get_pose()
+    wrist_pose.from_frame = "wrist"
+    wrist_pose.to_frame = "world"
+    cam_pose = wrist_pose * wrist_to_d435
+    
+    x_min_world, x_max_world, y_min_world, y_max_world, z_min_world, z_max_world, table_height = detect_table_boundaries(wrist_cam, cam_pose)
+    print(f"✓ Table boundaries detected: x=[{x_min_world:.3f}, {x_max_world:.3f}], y=[{y_min_world:.3f}, {y_max_world:.3f}], z=[{z_min_world:.3f}, {z_max_world:.3f}]")
+    
+    # Load trajectory (Note: using calibration_trajectory.npy instead of prime_centered_trajectory.npy from original)
+    trajectory_path = os.path.join(calibration_save_path, "prime_centered_trajectory.npy")
     if not os.path.exists(trajectory_path):
         print(f"✗ Trajectory file not found: {trajectory_path}")
         print("Please run calibrate_cameras.py first to generate trajectory")
@@ -341,7 +416,7 @@ def main(scene_name="realsense_scene"):
         wrist_pose_nerf = save_pose_nerf(cam_pose, i + 1, save_dirs["poses"])
         intrinsics_list.append(wrist_cam.get_ns_intrinsics())
     
-    # Generate and save combined point cloud
+    # Generate and save combined point cloud with table-based filtering
     print("Generating combined point cloud...")
     
     # Filter out empty arrays before stacking
@@ -352,11 +427,65 @@ def main(scene_name="realsense_scene"):
         pc_all = np.vstack(valid_pc_arrays)
         rgb_all = np.vstack(valid_rgb_arrays)
         
-        # Subsample for efficiency
-        if len(pc_all) > 100000:
-            indices = np.random.choice(len(pc_all), 100000, replace=False)
-            pc_all = pc_all[indices]
-            rgb_all = rgb_all[indices]
+        # Filter point cloud based on table boundaries (similar to original)
+        close_mask = (
+            (pc_all[:, 0] >= x_min_world) & (pc_all[:, 0] <= x_max_world) &
+            (pc_all[:, 1] >= y_min_world) & (pc_all[:, 1] <= y_max_world) &
+            (pc_all[:, 2] >= z_min_world) & (pc_all[:, 2] <= z_max_world)
+        )
+        
+        close_pointcloud = pc_all[close_mask]
+        close_rgbcloud = rgb_all[close_mask]
+        not_close_pointcloud = pc_all[~close_mask]
+        not_close_rgbcloud = rgb_all[~close_mask]
+        
+        # Subsample with table-aware strategy
+        num_gaussians_initialization = 100000  # Reduced from original 200k for efficiency
+        
+        if len(close_pointcloud) > 0:
+            # Sample more densely from table region (foreground)
+            close_samples = min(len(close_pointcloud), int(num_gaussians_initialization * 0.7))
+            close_indices = np.random.choice(len(close_pointcloud), close_samples, replace=False)
+            subsampled_close_pc = close_pointcloud[close_indices]
+            subsampled_close_rgb = close_rgbcloud[close_indices]
+            
+            # Remove outliers using DBSCAN
+            db = DBSCAN(eps=0.005, min_samples=20)
+            labels = db.fit_predict(subsampled_close_pc)
+            subsampled_close_pc = subsampled_close_pc[labels != -1]
+            subsampled_close_rgb = subsampled_close_rgb[labels != -1]
+        else:
+            subsampled_close_pc = np.empty((0, 3))
+            subsampled_close_rgb = np.empty((0, 3))
+        
+        if len(not_close_pointcloud) > 0:
+            # Sample less densely from background
+            bg_samples = min(len(not_close_pointcloud), 
+                           int(num_gaussians_initialization * 0.3))
+            bg_indices = np.random.choice(len(not_close_pointcloud), bg_samples, replace=False)
+            subsampled_bg_pc = not_close_pointcloud[bg_indices]
+            subsampled_bg_rgb = not_close_rgbcloud[bg_indices]
+        else:
+            subsampled_bg_pc = np.empty((0, 3))
+            subsampled_bg_rgb = np.empty((0, 3))
+        
+        # Combine foreground and background
+        if len(subsampled_close_pc) > 0 and len(subsampled_bg_pc) > 0:
+            pc_all = np.vstack((subsampled_close_pc, subsampled_bg_pc))
+            rgb_all = np.vstack((subsampled_close_rgb, subsampled_bg_rgb))
+        elif len(subsampled_close_pc) > 0:
+            pc_all = subsampled_close_pc
+            rgb_all = subsampled_close_rgb
+        elif len(subsampled_bg_pc) > 0:
+            pc_all = subsampled_bg_pc
+            rgb_all = subsampled_bg_rgb
+        else:
+            pc_all = np.empty((0, 3))
+            rgb_all = np.empty((0, 3))
+            
+        print(f"✓ Point cloud filtered: {len(close_pointcloud)} foreground, {len(not_close_pointcloud)} background points")
+        print(f"✓ Final point cloud: {len(pc_all)} points after subsampling")
+        
     else:
         print("Warning: No valid point cloud data captured")
         pc_all = np.empty((0, 3))
@@ -373,6 +502,20 @@ def main(scene_name="realsense_scene"):
     
     # Save transforms.json for NeRF
     save_transforms_json(save_dirs, intrinsics_list, scene_name)
+    
+    # Save table boundaries for later use (similar to original)
+    table_bounding_cube = {
+        'x_min': float(x_min_world),
+        'x_max': float(x_max_world),
+        'y_min': float(y_min_world),
+        'y_max': float(y_max_world),
+        'z_min': float(z_min_world),
+        'z_max': float(z_max_world),
+        'table_height': float(table_height)
+    }
+    with open(os.path.join(save_dirs["scene"], "table_bounding_cube.json"), 'w') as f:
+        json.dump(table_bounding_cube, f, indent=4)
+    print(f"✓ Table boundaries saved to table_bounding_cube.json")
     
     # Cleanup
     wrist_cam.stop()

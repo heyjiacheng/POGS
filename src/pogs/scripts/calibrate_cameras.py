@@ -360,12 +360,14 @@ def register_webcam():
         print("Saved wrist_to_d435.tf")
 
     # Process static camera calibration if we have data
-    if d405_to_tag_list:
-        print(f"\nProcessing static camera calibration with {len(d405_to_tag_list)} poses...")
+    if d405_to_tag_list and any(t is not None for t in d405_to_tag_list):
+        # Filter out None values for processing
+        valid_d405_data = [t for t in d405_to_tag_list if t is not None]
+        print(f"\nProcessing static camera calibration with {len(valid_d405_data)} poses...")
         
-        # Calculate average pose of tag as seen by static camera (like original code)
-        d405_to_tag_translations = [t.translation for t in d405_to_tag_list]
-        d405_to_tag_rotations_euler = [R.from_matrix(d405_to_tag_list[0].rotation).as_euler('xyz') for t in d405_to_tag_list]
+        # Calculate average pose of tag as seen by static camera by averaging translations and rotations
+        d405_to_tag_translations = [t.translation for t in valid_d405_data]
+        d405_to_tag_rotations_euler = [R.from_matrix(t.rotation).as_euler('xyz') for t in valid_d405_data]
 
         avg_translation = np.mean(d405_to_tag_translations, axis=0)
         avg_rotation_euler = np.mean(d405_to_tag_rotations_euler, axis=0)
@@ -380,22 +382,22 @@ def register_webcam():
         print("Average D405 to tag transform:")
         print(d405_to_tag_avg)
         
-        # Calculate world to static camera transforms using AVERAGED observation (like original code)
+        # Calculate world to static camera transforms using INDIVIDUAL observations (like original code)
         world_to_d405_rvecs = []
         world_to_d405_tvecs = []
         
-        # Use the same poses that were used for wrist camera calibration
-        for world_to_wrist, d435_to_tag in zip(world_to_wrist_list, d435_to_tag_list):
-            # Transform chain: world -> wrist -> d435 -> tag -> d405 (using AVERAGED d405_to_tag)
-            world_to_d405 = world_to_wrist * H_cam_rob * d435_to_tag * d405_to_tag_avg.inverse()
-            
-            # Convert to rotation vector and translation for averaging (like original code)
-            world_to_d405_rvec, _ = cv2.Rodrigues(world_to_d405.rotation)
-            world_to_d405_tvec = world_to_d405.translation
-            
-            # Store results
-            world_to_d405_rvecs.append(world_to_d405_rvec)
-            world_to_d405_tvecs.append(world_to_d405_tvec)
+        for world_to_wrist, d435_to_tag, d405_to_tag in zip(world_to_wrist_list, d435_to_tag_list, d405_to_tag_list):
+            if d405_to_tag is not None:  # Only process if we have valid static camera data
+                # Transform chain: world -> wrist -> d435 -> tag -> d405 (using INDIVIDUAL d405_to_tag)
+                world_to_d405 = world_to_wrist * H_cam_rob * d435_to_tag * d405_to_tag.inverse()
+                
+                # Convert to rotation vector and translation for averaging (like original code)
+                world_to_d405_rvec, _ = cv2.Rodrigues(world_to_d405.rotation)
+                world_to_d405_tvec = world_to_d405.translation
+                
+                # Store results
+                world_to_d405_rvecs.append(world_to_d405_rvec)
+                world_to_d405_tvecs.append(world_to_d405_tvec)
 
         # Calculate average translation and rotation for final transform (like original code)
         avg_world_to_d405_translation = np.mean(np.array(world_to_d405_tvecs), axis=0)
