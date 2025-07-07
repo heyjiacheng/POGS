@@ -43,7 +43,8 @@ pogs = { path = ".", editable = true }
 [tool.pixi.tasks]
 build = """
 pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu118 &&
-pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch &&
+pip install ninja &&
+pip install git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch &&
 pip install jaxtyping rich &&
 pip install gsplat --index-url https://docs.gsplat.studio/whl/pt20cu118 &&
 pip install warp-lang &&
@@ -51,6 +52,8 @@ pip install --extra-index-url=https://pypi.nvidia.com "cudf-cu11==25.4.*" "cuml-
 python -m pip install -e . &&
 python -m pip install pogs/dependencies/nerfstudio/ &&
 pip install fast_simplification==0.1.7 &&
+pip install git+https://github.com/facebookresearch/detectron2.git &&
+pip install git+https://github.com/openai/CLIP.git &&
 ns-install-cli &&
 pip install ur_rtde==1.4.2 cowsay opt-einsum pyvista autolab-core &&
 pip install -e ./pogs/dependencies/ur5py &&

@@ -1593,7 +1593,7 @@ packages:
 - pypi: .
   name: pogs
   version: 0.1.0
-  sha256: d3c415eacc27b38749b28e5f36c014064e863d736851d353b6158ae272e6449a
+  sha256: 8a62ef020846c028f50d7d38f4002b6b08dbcb3c5a211b88348a7b49625dfa68
   requires_dist:
   - pillow
   - jaxtyping
