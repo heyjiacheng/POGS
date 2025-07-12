@@ -198,7 +198,7 @@ def register_webcam():
     clear_tcp(ur)
 
     # Move robot to home position
-    home_joints = np.array([0.11, -2.23, 1.38, -0.71, -1.56, 1.68])
+    home_joints = np.array([0.11, -2.0, 1.2394, -0.75074, -1.64462, 3.29472])
     ur.move_joint(home_joints, vel=1.0, acc=0.1)
 
     with open(config_filepath, 'r') as f:
@@ -221,7 +221,7 @@ def register_webcam():
     teach_mode = True  # Enable teaching mode as requested
     
     # Trajectory management
-    trajectory_path = pathlib.Path(calibration_save_path + "/calibration_trajectory.npy")
+    trajectory_path = pathlib.Path(calibration_save_path + "/table_centered_trajectory.npy")
     automatic_path = False
     
     # Try to load pre-recorded trajectory if available

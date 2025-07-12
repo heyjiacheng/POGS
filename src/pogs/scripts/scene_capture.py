@@ -346,7 +346,7 @@ def main(scene_name="realsense_scene"):
     print(f"✓ Table boundaries detected: x=[{x_min_world:.3f}, {x_max_world:.3f}], y=[{y_min_world:.3f}, {y_max_world:.3f}], z=[{z_min_world:.3f}, {z_max_world:.3f}]")
     
     # Load trajectory (Note: using calibration_trajectory.npy instead of prime_centered_trajectory.npy from original)
-    trajectory_path = os.path.join(calibration_save_path, "prime_centered_trajectory.npy")
+    trajectory_path = os.path.join(calibration_save_path, "table_centered_trajectory.npy")
     if not os.path.exists(trajectory_path):
         print(f"✗ Trajectory file not found: {trajectory_path}")
         print("Please run calibrate_cameras.py first to generate trajectory")
