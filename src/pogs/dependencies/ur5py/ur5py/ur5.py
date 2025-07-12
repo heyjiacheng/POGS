@@ -22,7 +22,7 @@ def UR2RT(pose:List):
     return RigidTransform(translation=pose[:3],rotation=m)
 
 class UR5Robot():
-    def __init__(self,ip = "172.22.22.3", gripper = False):
+    def __init__(self,ip = "192.168.1.60", gripper = False):
         self.ur_c =  rtde_control.RTDEControlInterface(ip)
         self.ur_r = rtde_receive.RTDEReceiveInterface(ip)
         self.ur_io = rtde_io.RTDEIOInterface(ip)
