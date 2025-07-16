@@ -303,7 +303,7 @@ steps_per_eval_all_images: 25000
 steps_per_eval_batch: 100
 steps_per_eval_image: 100
 steps_per_save: 1000
-timestamp: 2025-07-08_184406
+timestamp: 2025-07-16_155438
 use_grad_scaler: false
 viewer: !!python/object:nerfstudio.configs.base_config.ViewerConfig
   camera_frustum_scale: 0.1
