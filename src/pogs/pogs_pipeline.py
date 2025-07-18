@@ -644,14 +644,15 @@ class POGSPipeline(VanillaPipeline):
             self.crop_group_tf_list.append(self.cgtf_stack[i])
         
         # View the crop group list
-        keep_inds = []
-        for inds in self.crop_group_list:
-            keep_inds.extend(inds)
-        keep_inds = torch.stack(keep_inds)
-        prev_state = self.state_stack[-1]
-        for name in self.model.gauss_params.keys():
-            self.model.gauss_params[name] = prev_state[name][keep_inds]
-        self.model.keep_inds = keep_inds
+        if len(self.crop_group_list) > 0 and len(self.state_stack) > 0:
+            keep_inds = []
+            for inds in self.crop_group_list:
+                keep_inds.extend(inds)
+            keep_inds = torch.stack(keep_inds)
+            prev_state = self.state_stack[-1]
+            for name in self.model.gauss_params.keys():
+                self.model.gauss_params[name] = prev_state[name][keep_inds]
+            self.model.keep_inds = keep_inds
         
         
     
@@ -682,24 +683,45 @@ class POGSPipeline(VanillaPipeline):
             pcd.colors = o3d.utility.Vector3dVector(normalized_colors)
             o3d.io.write_point_cloud(str(segmented_filename),pcd)
             
-        prev_state = self.state_stack[-1]
-        with torch.no_grad():
-            positions = prev_state["means"].cpu().numpy()
-            features_dc = prev_state["features_dc"].cpu().numpy()
-            if(self.model.config.sh_degree > 0):
-                colors = SH2RGB(features_dc)
-            else:
-                torch.sigmoid(features_dc)
-            normalized_colors = (colors - np.min(colors)) / (np.max(colors) - np.min(colors))
+        # Export full gaussians (use current state if no previous state is available)
+        if len(self.state_stack) > 0:
+            prev_state = self.state_stack[-1]
+            with torch.no_grad():
+                positions = prev_state["means"].cpu().numpy()
+                features_dc = prev_state["features_dc"].cpu().numpy()
+                if(self.model.config.sh_degree > 0):
+                    colors = SH2RGB(features_dc)
+                else:
+                    colors = torch.sigmoid(features_dc).cpu().numpy()
+                normalized_colors = (colors - np.min(colors)) / (np.max(colors) - np.min(colors))
 
-            
-            positions = positions.astype('float64')
-            normalized_colors = normalized_colors.astype('float64')
+                
+                positions = positions.astype('float64')
+                normalized_colors = normalized_colors.astype('float64')
 
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(positions)
-            pcd.colors = o3d.utility.Vector3dVector(normalized_colors)
-            o3d.io.write_point_cloud(str(full_filename),pcd)
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(positions)
+                pcd.colors = o3d.utility.Vector3dVector(normalized_colors)
+                o3d.io.write_point_cloud(str(full_filename),pcd)
+        else:
+            # No previous state, use current model state
+            with torch.no_grad():
+                positions = self.model.means.cpu().numpy()
+                if self.model.config.sh_degree > 0:
+                    features_dc = self.model.shs_0.cpu().numpy()
+                    colors = SH2RGB(features_dc)
+                else:
+                    colors = torch.sigmoid(self.model.features_dc).cpu().numpy()
+                normalized_colors = (colors - np.min(colors)) / (np.max(colors) - np.min(colors))
+
+                
+                positions = positions.astype('float64')
+                normalized_colors = normalized_colors.astype('float64')
+
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(positions)
+                pcd.colors = o3d.utility.Vector3dVector(normalized_colors)
+                o3d.io.write_point_cloud(str(full_filename),pcd)
         
     def _load_traj_file(self, dropdown: ViewerDropdown) -> None:
         """Load a trajectory file"""
