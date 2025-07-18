@@ -645,6 +645,7 @@ class POGSModel(SplatfactoModel):
                 from cuml.neighbors import NearestNeighbors
                 model = NearestNeighbors(n_neighbors=3)
                 means = self.means.detach().cpu().numpy()
+                means = np.ascontiguousarray(means, dtype=np.float32)
                 model.fit(means)
                 _, self.nearest_ids = model.kneighbors(means)
             # encourage the nearest neighbors to have similar dino feats
@@ -801,6 +802,9 @@ class POGSModel(SplatfactoModel):
         self.cluster_scene.set_disabled(True)  # Disable user from clustering, while clustering
 
         labels = self.cluster(self.cluster_eps.value)
+        if labels is None:
+            self.cluster_scene.set_disabled(False)
+            return
 
         opacities = self.gauss_params['opacities'].detach()
         opacities[labels < 0] = -100  # hide unclustered gaussians

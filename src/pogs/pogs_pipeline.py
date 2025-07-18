@@ -183,6 +183,13 @@ class POGSPipeline(VanillaPipeline):
             cb_hook=self._update_interaction_method
         )
 
+        self.cluster_scene = ViewerButton(name="Cluster Scene", cb_hook=self.model._cluster_scene)
+        self.cluster_scene_scale = ViewerSlider(name="Clustering Scale", min_value=0.0, max_value=1.0, step=0.05, default_value=0.5)
+        self.cluster_scene_shuffle_colors = ViewerButton(name="Shuffle Colors", cb_hook=self.model._reshuffle_cluster_colors)
+        
+        self.crop_to_group_level = ViewerSlider(name="Crop to Group Level", min_value=0, max_value=10, step=1, default_value=5)
+        self.move_crop_frame = ViewerCheckbox(name="Move Crop Frame", default_value=False)
+
         self.click_gaussian = ViewerButton(name="Click", cb_hook=self._click_gaussian)
         self.click_location = None
         self.click_handle = None
@@ -463,6 +470,12 @@ class POGSPipeline(VanillaPipeline):
         table_z_val = bounding_box_dict['table_height'] + 0.015 #- 0.01 # Removes everything below this value to represent the table and anything below. Found 0.008 to be good value for this
         # table_z_val = -0.165 # z value of the table to filter out of our clusters
         keep_list = [keep_list[0][torch.where(curr_means[keep_list[0]][:,2] > table_z_val)[0].cpu()]] # filter out table points
+
+        if len(keep_list[0]) == 0:
+            print("No gaussians within crop after filtering, aborting")
+            self._reset_state(None, pop=True)
+            return
+
         # Remove the click handle + visualization
         self.click_location = None
         self.click_handle.remove()
