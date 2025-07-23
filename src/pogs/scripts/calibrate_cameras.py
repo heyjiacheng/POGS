@@ -221,7 +221,7 @@ def register_webcam():
     teach_mode = True  # Enable teaching mode as requested
     
     # Trajectory management
-    trajectory_path = pathlib.Path(calibration_save_path + "/calibration_trajectory.npy")
+    trajectory_path = pathlib.Path(calibration_save_path + "/prime_centered_trajectory.npy")
     automatic_path = False
     
     # Try to load pre-recorded trajectory if available

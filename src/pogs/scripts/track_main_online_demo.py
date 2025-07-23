@@ -2,12 +2,11 @@ import torch
 import viser
 import viser.transforms as vtf
 import time
-import pyzed.sl as sl
+import pyrealsense2 as rs
 import numpy as np
 import tyro
 from pathlib import Path
-from autolab_core import RigidTransform
-from pogs.tracking.tri_zed import Zed
+from autolab_core import RigidTransform, CameraIntrinsics, DepthImage
 from pogs.tracking.optim import Optimizer
 import warp as wp
 from pogs.encoders.openclip_encoder import OpenCLIPNetworkConfig, OpenCLIPNetwork
@@ -16,15 +15,129 @@ import yaml
 import os
 from ur5py.ur5 import UR5Robot
 import open3d as o3d
+import cv2
 
 # Path to the directory containing this script
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
 # Pre-calibrated transforms between coordinate frames
-WORLD_TO_ZED2 = RigidTransform.load(dir_path+"/../calibration_outputs/world_to_extrinsic_zed.tf")
-WRIST_TO_CAM = RigidTransform.load(dir_path + "/../calibration_outputs/wrist_to_zed_mini.tf")
+WORLD_TO_D405 = RigidTransform.load(dir_path+"/../calibration_outputs/world_to_d405.tf")
+WRIST_TO_D435 = RigidTransform.load(dir_path + "/../calibration_outputs/wrist_to_d435.tf")
 
 DEVICE = 'cuda:0'
+
+# RealSense Camera Class (adapted from scene_capture.py)
+class RealSenseCamera:
+    def __init__(self, serial_number, width=640, height=480, fps=30, camera_name="realsense"):
+        self.pipeline = rs.pipeline()
+        self.config = rs.config()
+        self.config.enable_device(serial_number)
+        self.config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+        self.config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
+
+        # Start pipeline and get camera info
+        profile = self.pipeline.start(self.config)
+        self.align = rs.align(rs.stream.color)
+        
+        # Get intrinsics
+        color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
+        self.intr = color_stream.get_intrinsics()
+        self.intrinsics = CameraIntrinsics(camera_name, self.intr.width, self.intr.height,
+                                           self.intr.fx, self.intr.fy, self.intr.ppx, self.intr.ppy)
+        
+        # Create a simple mesh for visualization (box representing camera)
+        self.camera_mesh = o3d.geometry.TriangleMesh.create_box(width=0.02, height=0.01, depth=0.005)
+        self.camera_mesh.paint_uniform_color([0.3, 0.3, 0.7])
+        # Ensure mesh is on CPU for viser compatibility
+        if hasattr(self.camera_mesh, 'cpu'):
+            self.camera_mesh = self.camera_mesh.cpu()
+        
+        # Camera to camera transform (identity for RealSense)
+        self.cam_to_camera = RigidTransform(
+            rotation=np.eye(3),
+            translation=np.zeros(3),
+            from_frame="camera",
+            to_frame="camera"
+        )
+        
+        # Warm up camera
+        for _ in range(10):
+            self.pipeline.wait_for_frames()
+
+    def get_frame(self, depth=False):
+        """Get camera frame(s) in format expected by tracking system"""
+        frames = self.pipeline.wait_for_frames()
+        aligned_frames = self.align.process(frames)
+        color = aligned_frames.get_color_frame()
+        
+        color_image = np.asanyarray(color.get_data())
+        # Convert BGR to RGB for consistency with tracking system
+        color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+        
+        # Convert to tensor format expected by tracking system (HWC format like ZED)
+        color_tensor = torch.from_numpy(color_image).float().cuda()
+        
+        if depth:
+            depth_frame = aligned_frames.get_depth_frame()
+            depth_image = np.asanyarray(depth_frame.get_data()) / 1000.0  # Convert to meters
+            depth_tensor = torch.from_numpy(depth_image).float().cuda()
+            return color_tensor, None, depth_tensor  # Return (left, right, depth) for compatibility
+        else:
+            return color_tensor, None, None
+
+    def get_K(self):
+        """Get camera intrinsic matrix"""
+        return np.array([
+            [self.intr.fx, 0, self.intr.ppx],
+            [0, self.intr.fy, self.intr.ppy],
+            [0, 0, 1]
+        ])
+    
+    @staticmethod
+    def project_depth(rgb, depth, K, depth_threshold=1.0, subsample=100):
+        """Project depth image to 3D points with colors (adapted from Zed class)"""
+        h, w = depth.shape
+        
+        # Create coordinate grids
+        u, v = torch.meshgrid(torch.arange(w), torch.arange(h), indexing='xy')
+        u = u.cuda().float()
+        v = v.cuda().float()
+        
+        # Flatten
+        u_flat = u.flatten()
+        v_flat = v.flatten()
+        depth_flat = depth.flatten()
+        
+        # Filter valid depths
+        valid_mask = (depth_flat > 0) & (depth_flat < depth_threshold)
+        u_valid = u_flat[valid_mask]
+        v_valid = v_flat[valid_mask]
+        depth_valid = depth_flat[valid_mask]
+        
+        # Subsample
+        if len(u_valid) > subsample:
+            indices = torch.randperm(len(u_valid))[:subsample]
+            u_valid = u_valid[indices]
+            v_valid = v_valid[indices]
+            depth_valid = depth_valid[indices]
+        
+        # Back-project to 3D
+        fx, fy = K[0, 0], K[1, 1]
+        cx, cy = K[0, 2], K[1, 2]
+        
+        x = (u_valid - cx) * depth_valid / fx
+        y = (v_valid - cy) * depth_valid / fy
+        z = depth_valid
+        
+        points = torch.stack([x, y, z], dim=-1)
+        
+        # Get colors (rgb is already in HWC format)
+        colors = rgb[v_valid.long(), u_valid.long()] / 255.0
+        
+        return points.cpu().numpy(), colors.cpu().numpy()
+
+    def stop(self):
+        self.pipeline.stop()
 
 def clear_tcp(robot):
     """
@@ -162,7 +275,7 @@ def main(
     wp.init()
     
     # Create UI controls
-    opt_init_handle = server.add_gui_button("Set initial frame", disabled=True)
+    opt_init_handle = server.gui.add_button("Set initial frame", disabled=True)
     
     # Initialize CLIP model for language understanding
     clip_encoder = OpenCLIPNetworkConfig(
@@ -174,25 +287,21 @@ def main(
     assert isinstance(clip_encoder, OpenCLIPNetwork)
     
     # Add UI elements for user interaction
-    text_handle = server.add_gui_text("Positives", "", disabled=True)
-    query_handle = server.add_gui_button("Query", disabled=True)
-    generate_grasps_handle = server.add_gui_button("Generate Grasps on Query", disabled=True)
-    execute_grasp_handle = server.add_gui_button("Execute Grasp for Query", disabled=True)
+    text_handle = server.gui.add_text("Positives", "", disabled=True)
+    query_handle = server.gui.add_button("Query", disabled=True)
+    generate_grasps_handle = server.gui.add_button("Generate Grasps on Query", disabled=True)
+    execute_grasp_handle = server.gui.add_button("Execute Grasp for Query", disabled=True)
     
     # Load camera configuration from YAML
     config_filepath = os.path.join(dir_path, '../configs/camera_config.yaml')
     with open(config_filepath, 'r') as file:
         camera_parameters = yaml.safe_load(file)
 
-    # Initialize ZED camera with parameters from config
-    zed = Zed(flip_mode=camera_parameters['third_view_zed']['flip_mode'],
-              resolution=camera_parameters['third_view_zed']['resolution'],
-              fps=camera_parameters['third_view_zed']['fps'],
-              cam_id=camera_parameters['third_view_zed']['id'])
-    
-    # Apply camera settings from capture session to ensure consistency
-    zed.cam.set_camera_settings(sl.VIDEO_SETTINGS.EXPOSURE, camera_parameters['third_view_zed']['exposure'])
-    zed.cam.set_camera_settings(sl.VIDEO_SETTINGS.GAIN, camera_parameters['third_view_zed']['gain'])
+    # Initialize RealSense camera with parameters from config
+    realsense_cam = RealSenseCamera(
+        serial_number=camera_parameters['static_d405']['id'],
+        width=640, height=480, fps=30, camera_name="d405"
+    )
 
     time.sleep(1.0)  # Allow camera to initialize
     
@@ -201,16 +310,16 @@ def main(
     clear_tcp(robot)
     
     # Move robot to home position
-    home_joints = np.array([-1.433847729359762, -1.6635258833514612, -0.8512895742999476, -3.7683952490436, -1.4371045271502894, 3.1419787406921387])
+    home_joints = np.array([0.11, -2.0, 1.2394, -0.75074, -1.64462, 3.29472])
     robot.move_joint(home_joints, vel=1.0, acc=0.1)
     world_to_wrist = robot.get_pose()
     world_to_wrist.from_frame = "wrist"
 
     # Get camera transformation
-    camera_tf = WORLD_TO_ZED2
+    camera_tf = WORLD_TO_D405
             
     # Add camera visualization to the scene
-    camera_frame = server.add_frame(
+    camera_frame = server.scene.add_frame(
         "camera",
         position=camera_tf.translation,
         wxyz=camera_tf.quaternion,
@@ -218,23 +327,24 @@ def main(
         axes_length=0.1,
         axes_radius=0.005,
     )
-    server.add_mesh_trimesh(
+    server.scene.add_mesh_simple(
         "camera/mesh",
-        mesh=zed.zed_mesh,
-        scale=0.001,
-        position=zed.cam_to_zed.translation,
-        wxyz=zed.cam_to_zed.quaternion,
+        vertices=np.asarray(realsense_cam.camera_mesh.vertices),
+        faces=np.asarray(realsense_cam.camera_mesh.triangles),
+        color=(0.3, 0.3, 0.7),
+        position=realsense_cam.cam_to_camera.translation,
+        wxyz=realsense_cam.cam_to_camera.quaternion,
     )
 
     # Get initial frame from camera
-    l, _, depth = zed.get_frame(depth=True)
+    l, _, depth = realsense_cam.get_frame(depth=True)
     
     # Initialize the neural object tracker
     toad_opt = Optimizer(
         config_path,
-        zed.get_K(),
-        l.shape[1],
-        l.shape[0], 
+        realsense_cam.get_K(),
+        l.shape[1],  # Width
+        l.shape[0],  # Height 
         init_cam_pose=torch.from_numpy(
             vtf.SE3(
                 wxyz_xyz=np.array([*camera_frame.wxyz, *camera_frame.position])
@@ -248,12 +358,12 @@ def main(
         Callback for initializing the tracking optimization.
         Gets current frame from camera and initializes object pose.
         """
-        assert (zed is not None) and (toad_opt is not None)
+        assert (realsense_cam is not None) and (toad_opt is not None)
         opt_init_handle.disabled = True
-        l, _, depth = zed.get_frame(depth=True)
+        l, _, depth = realsense_cam.get_frame(depth=True)
         toad_opt.set_frame(l, toad_opt.cam2world_ns, depth)
-        with zed.raft_lock:
-            toad_opt.init_obj_pose()
+        # Note: RealSense doesn't have raft_lock like ZED, so we skip that
+        toad_opt.init_obj_pose()
         query_handle.disabled = False
         
     opt_init_handle.disabled = False
@@ -334,7 +444,7 @@ def main(
                 center_y = (y_min + y_max) / 2
                 center_z = (z_min + z_max) / 2
                 
-                server.add_box(
+                server.scene.add_box(
                     name=name,
                     color=color,
                     dimensions=(width, height, depth),
@@ -353,7 +463,7 @@ def main(
         grasp_mesh, grasp_color = plot_gripper_pro_max(center, R=vis_rotation_matrix, width=0.085, depth=0.1016)
 
         # Add the grasp visualization to the scene
-        server.add_mesh_simple(
+        server.scene.add_mesh_simple(
             name="grasp",
             vertices=np.asarray(grasp_mesh.vertices),
             faces=np.asarray(grasp_mesh.triangles),
@@ -426,10 +536,10 @@ def main(
     
     # Main tracking and visualization loop
     while True:
-        if zed is not None:
+        if realsense_cam is not None:
             start_time = time.time()
             # Get new frame from camera
-            left, right, depth = zed.get_frame()
+            left, right, depth = realsense_cam.get_frame(depth=True)
             
             assert isinstance(toad_opt, Optimizer)
             if toad_opt.initialized:
@@ -439,15 +549,15 @@ def main(
                 
                 # Run optimization iterations
                 n_opt_iters = 25
-                with zed.raft_lock:
-                    outputs = toad_opt.step_opt(niter=n_opt_iters)
+                # Note: RealSense doesn't have raft_lock like ZED, so we skip that
+                outputs = toad_opt.step_opt(niter=n_opt_iters)
 
                 # Add current camera image to visualization
-                server.add_image(
-                    "cam/zed_left",
+                server.scene.add_image(
+                    "cam/realsense_rgb",
                     left.cpu().detach().numpy(),
-                    render_width=left.shape[1]/2500,
-                    render_height=left.shape[0]/2500,
+                    render_width=left.shape[1]/2500,  # Width is dimension 1 in HWC
+                    render_height=left.shape[0]/2500,  # Height is dimension 0 in HWC
                     position = (0.5, 0.5, 0.5),
                     wxyz=(0, -0.7071068, -0.7071068, 0),
                     visible=True
@@ -455,11 +565,11 @@ def main(
                 real_frames.append(left.cpu().detach().numpy())
                 
                 # Add rendered RGB from neural tracking to visualization
-                server.add_image(
+                server.scene.add_image(
                     "cam/gs_render",
                     outputs["rgb"].cpu().detach().numpy(),
-                    render_width=left.shape[1]/2500,
-                    render_height=left.shape[0]/2500,
+                    render_width=left.shape[1]/2500,  # Width is dimension 1 in HWC
+                    render_height=left.shape[0]/2500,  # Height is dimension 0 in HWC
                     position = (0.5, -0.5, 0.5),
                     wxyz=(0, -0.7071068, -0.7071068, 0),
                     visible=True
@@ -469,7 +579,7 @@ def main(
                 # Update object transforms and meshes in visualization
                 tf_list = toad_opt.get_parts2world()
                 for idx, tf in enumerate(tf_list):
-                    server.add_frame(
+                    server.scene.add_frame(
                         f"object/group_{idx}",
                         position=tf.translation(),
                         wxyz=tf.rotation().wxyz,
@@ -478,13 +588,13 @@ def main(
                         axes_radius=.001
                     )
                     mesh = toad_opt.toad_object.meshes[idx]
-                    server.add_mesh_trimesh(
+                    server.scene.add_mesh_trimesh(
                         f"object/group_{idx}/mesh",
                         mesh=mesh,
                     )
                     # Add label to the queried object
                     if idx == toad_opt.max_relevancy_label:
-                        obj_label_list[idx] = server.add_label(
+                        obj_label_list[idx] = server.scene.add_label(
                         f"object/group_{idx}/label",
                         text=toad_opt.max_relevancy_text,
                         position = (0,0,0.05),
@@ -494,10 +604,10 @@ def main(
                             obj_label_list[idx].remove()
 
             # Visualize 3D point cloud from depth image
-            K = torch.from_numpy(zed.get_K()).float().cuda()
+            K = torch.from_numpy(realsense_cam.get_K()).float().cuda()
             assert isinstance(left, torch.Tensor) and isinstance(depth, torch.Tensor)
-            points, colors = Zed.project_depth(left, depth, K, depth_threshold=1.0, subsample=100)
-            server.add_point_cloud(
+            points, colors = RealSenseCamera.project_depth(left, depth, K, depth_threshold=1.0, subsample=100)
+            server.scene.add_point_cloud(
                 "camera/points",
                 points=points,
                 colors=colors,

@@ -6,7 +6,6 @@ import numpy as np
 import tyro  # Command-line interface for function arguments
 from pathlib import Path
 from autolab_core import RigidTransform  # For rigid transforms
-from pogs.tracking.realsense import RealSense  # You must create/adapt this like Zed.py
 from pogs.tracking.optim import Optimizer  # Core optimization pipeline
 import warp as wp
 from pogs.encoders.openclip_encoder import OpenCLIPNetworkConfig, OpenCLIPNetwork
@@ -22,11 +21,57 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 
 # Load static camera pose (D405 in place of ZED2) — assumed calibrated
 WORLD_TO_D405 = RigidTransform.load(
-    os.path.join(dir_path, "../tracking/data/calibration_outputs/world_to_d405.tf")
+    os.path.join(dir_path, "../calibration_outputs/world_to_d405.tf")
 )
 
 # Set the compute device to GPU
 DEVICE = 'cuda:0'
+
+# RealSense utility class for depth projection
+class RealSense:
+    @staticmethod
+    def project_depth(rgb, depth, K, depth_threshold=1.0, subsample=100):
+        """Project depth image to 3D points with colors"""
+        h, w = depth.shape
+        
+        # Create coordinate grids
+        u, v = torch.meshgrid(torch.arange(w), torch.arange(h), indexing='xy')
+        u = u.cuda().float()
+        v = v.cuda().float()
+        
+        # Flatten
+        u_flat = u.flatten()
+        v_flat = v.flatten()
+        depth_flat = depth.flatten()
+        
+        # Filter valid depths
+        valid_mask = (depth_flat > 0) & (depth_flat < depth_threshold)
+        u_valid = u_flat[valid_mask]
+        v_valid = v_flat[valid_mask]
+        depth_valid = depth_flat[valid_mask]
+        
+        # Subsample
+        if len(u_valid) > subsample:
+            indices = torch.randperm(len(u_valid))[:subsample]
+            u_valid = u_valid[indices]
+            v_valid = v_valid[indices]
+            depth_valid = depth_valid[indices]
+        
+        # Back-project to 3D
+        fx, fy = K[0, 0], K[1, 1]
+        cx, cy = K[0, 2], K[1, 2]
+        
+        x = (u_valid - cx) * depth_valid / fx
+        y = (v_valid - cy) * depth_valid / fy
+        z = depth_valid
+        
+        points = torch.stack([x, y, z], dim=-1)
+        
+        # Get colors
+        rgb_permuted = rgb.permute(1, 2, 0)  # CHW -> HWC
+        colors = rgb_permuted[v_valid.long(), u_valid.long()] / 255.0
+        
+        return points.cpu().numpy(), colors.cpu().numpy()
 
 
 # ============================================================================
@@ -34,16 +79,44 @@ DEVICE = 'cuda:0'
 # ============================================================================
 
 def main(
-    config_path: str = "/home/yujustin/pogs/outputs/drill_realsense_d435/pogs/2025-02-07_004727/config.yml",
-    offline_folder: str = '/home/yujustin/pogs/data/demonstrations/drill_realsense_d435'
+    config_path: str = "/home/lifelong/pogs/pogs/data/utils/datasets/outputs/20250305_prime_drill/pogs/2025-03-05_180006/config.yml",
+    offline_folder: str = '/home/lifelong/pogs/pogs/data/demonstrations/drill_realsense_d435'
 ):
-    """Tracking demo using wrist-mounted RealSense D435 and static D405."""
+    """Tracking demo using wrist-mounted RealSense D435 and static D405.
+    
+    Args:
+        config_path: Path to the POGS config.yml file
+        offline_folder: Path to the offline data folder containing 'color' and 'depth' subdirectories
+    """
+    
+    # Check if paths exist
+    if not os.path.exists(config_path):
+        print(f"Warning: Config file not found at {config_path}")
+        print("Please provide a valid config_path argument")
+        return
+        
+    if not os.path.exists(offline_folder):
+        print(f"Warning: Offline folder not found at {offline_folder}")
+        print("Please provide a valid offline_folder argument")
+        return
     
     # Load image and depth data paths
     image_folder = os.path.join(offline_folder, "color")
     depth_folder = os.path.join(offline_folder, "depth")
-    image_paths = sorted(os.listdir(image_folder))
-    depth_paths = sorted(os.listdir(depth_folder))
+    
+    if not os.path.exists(image_folder) or not os.path.exists(depth_folder):
+        print(f"Error: Could not find 'color' and 'depth' folders in {offline_folder}")
+        print("Expected structure: offline_folder/color/ and offline_folder/depth/")
+        return
+        
+    image_paths = sorted([f for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+    depth_paths = sorted([f for f in os.listdir(depth_folder) if f.lower().endswith('.npy')])
+    
+    if len(image_paths) == 0 or len(depth_paths) == 0:
+        print(f"Error: No image files found in {image_folder} or no depth files found in {depth_folder}")
+        return
+        
+    print(f"Found {len(image_paths)} images and {len(depth_paths)} depth files")
     
     # Start a visualization server (Viser for 3D viewing)
     server = viser.ViserServer()
@@ -130,15 +203,15 @@ def main(
 
         # Add bounding boxes to real image
         rgb_img = left.cpu().numpy().transpose(1, 2, 0).astype(np.uint8)
-        for i, frame in enumerate(toad_opt.optimizer.frame.roi_frames):
+        for frame in toad_opt.optimizer.frame.roi_frames:
             rgb_img = cv2.rectangle(rgb_img, (frame.xmin, frame.ymin), (frame.xmax, frame.ymax), (255, 0, 0), 2)
 
         # Display raw and rendered images
-        server.scene.add_image("cam/realsense_d435", rgb_img, render_width=rgb_img.shape[1]/2500,
+        server.add_image("cam/realsense_d435", rgb_img, render_width=rgb_img.shape[1]/2500,
                                render_height=rgb_img.shape[0]/2500, position=(-0.5, -0.5, 0.5),
                                wxyz=(0, -1, 0, 0), visible=True)
 
-        server.scene.add_image("cam/rendered", outputs["rgb"].cpu().numpy(),
+        server.add_image("cam/rendered", outputs["rgb"].cpu().numpy(),
                                render_width=outputs["rgb"].shape[1]/2500,
                                render_height=outputs["rgb"].shape[0]/2500,
                                position=(0.5, -0.5, 0.5), wxyz=(0, -1, 0, 0), visible=True)

@@ -13,10 +13,10 @@ MAX_DINO_SIZE = 1260
 def get_img_resolution(H, W, p=14):
     if H<W:
         new_W = MAX_DINO_SIZE
-        new_H = (int((H/W)*MAX_DINO_SIZE)//p)*p
+        new_H = max(p, (int((H/W)*MAX_DINO_SIZE)//p)*p)
     else:
         new_H = MAX_DINO_SIZE
-        new_W = (int((W/H)*MAX_DINO_SIZE)//p)*p
+        new_W = max(p, (int((W/H)*MAX_DINO_SIZE)//p)*p)
     return new_H, new_W
 
 class DinoDataloader(FeatureDataloader):
