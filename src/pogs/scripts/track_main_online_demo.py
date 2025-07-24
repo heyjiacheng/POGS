@@ -261,7 +261,7 @@ def plot_gripper_pro_max(center, R, width, depth, score=1, color=None):
     return gripper, colors[0]
 
 def main(
-    config_path: Path = Path("/home/lifelong/pogs/pogs/data/utils/datasets/outputs/20250305_prime_drill/pogs/2025-03-05_180006/config.yml"),
+    config_path: Path = Path("/home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-07-23_204143/config.yml"),
 ):
     """
     Main function for the POGS (Perception for Object Grasping System) demo.

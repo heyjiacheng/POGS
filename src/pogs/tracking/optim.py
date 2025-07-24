@@ -357,7 +357,7 @@ class Optimizer:
         """Get the pointcloud of the object parts in camera frame."""
 
         with torch.no_grad():
-            self.optimizer.apply_to_model(self.optimizer.part_deltas, self.optimizer.centroids, self.optimizer.group_labels)
+            self.optimizer.apply_to_model(self.optimizer.part_deltas, self.optimizer.group_labels)
         points = self.optimizer.dig_model.means.clone().detach()
         colors = SH2RGB(self.optimizer.dig_model.colors.clone().detach())
         points = points / self.optimizer.dataset_scale
