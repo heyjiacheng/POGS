@@ -1,23 +1,46 @@
 import torch
 import numpy as np
 import tyro
+import time
 from pathlib import Path
-from pogs.tracking.optim import Optimizer
-import warp as wp
-from pogs.encoders.openclip_encoder import OpenCLIPNetworkConfig
 from typing import List, Tuple, Optional
+
+import warp as wp
+import moviepy as mpy
+import trimesh
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
-import viser.transforms as vtf
-import moviepy as mpy
-from nerfstudio.models.splatfacto import SH2RGB
-import time
-from copy import deepcopy
+
+from pogs.tracking.optim import Optimizer
+from pogs.encoders.openclip_encoder import OpenCLIPNetworkConfig
 from nerfstudio.cameras.cameras import Cameras
-import trimesh
+
+def load_camera_calibration(tf_file_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Load camera position and rotation from calibration file.
+    
+    Args:
+        tf_file_path: Path to world_to_d405.tf calibration file
+        
+    Returns:
+        Tuple of (camera_position, rotation_matrix):
+        - camera_position: 3D position in world coordinates  
+        - rotation_matrix: 3x3 world-to-camera rotation matrix
+    """
+    with open(tf_file_path, 'r') as f:
+        lines = f.readlines()
+    
+    # Line 3: camera position in world coordinates
+    camera_position = np.array([float(x) for x in lines[2].strip().split()])
+    
+    # Lines 4-6: rotation matrix
+    rotation_matrix = np.zeros((3, 3))
+    for i, line in enumerate(lines[3:6]):
+        rotation_matrix[i] = [float(x) for x in line.strip().split()]
+    
+    return camera_position, rotation_matrix
 
 class GaussianAnimator:
-    """Animates Gaussian splats along a specified trajectory."""
+    """Animates Gaussian splats along a trajectory with smooth interpolation."""
     
     def __init__(self, optimizer: Optimizer, 
                  object_idx: int, 
@@ -25,12 +48,13 @@ class GaussianAnimator:
                  orientations: Optional[List[Tuple[float, float, float, float]]] = None,
                  duration: float = 10.0,
                  fps: int = 30):
-        """
+        """Initialize the animator.
+        
         Args:
-            optimizer: POGS optimizer instance
+            optimizer: POGS optimizer containing the scene
             object_idx: Index of the object to animate
-            waypoints: List of (x, y, z) world coordinates
-            orientations: Optional list of quaternions (w, x, y, z) for each waypoint
+            waypoints: List of (x, y, z) world coordinates defining the path
+            orientations: Optional quaternions (w, x, y, z) for each waypoint
             duration: Total animation duration in seconds
             fps: Frames per second for the output video
         """
@@ -197,39 +221,35 @@ class GaussianAnimator:
         return frames
 
 
-def main(
-    config_path: Path = Path("/home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-07-23_204143/config.yml"),
-    semantic_query: str = "blue box",
-    waypoints: List[Tuple[float, float, float]] = [(0, 0, 0), (0.1, 0.1, 0.1), (0.2, 0, 0.15), (0.3, -0.1, 0.1)],
-    orientations: Optional[List[Tuple[float, float, float, float]]] = None,
-    animation_duration: float = 5.0,
-    output_path: str = "gaussian_animation.mp4",
-    fps: int = 30,
-    show_all_objects: bool = True,
-    camera_distance: float = 1.0,
-    camera_height: float = 0.5,
-    camera_angle: float = 30.0,
-):
-    """
-    Animate Gaussian splats along a specified path.
+def setup_optimizer(config_path: Path) -> Optimizer:
+    """Initialize the POGS optimizer."""
+    # Get dataset to extract camera parameters
+    from nerfstudio.utils.eval_utils import eval_setup
+    _, temp_pipeline, _, _ = eval_setup(config_path)
+    dataset = temp_pipeline.datamanager.train_dataset
     
-    Args:
-        config_path: Path to POGS configuration
-        semantic_query: Semantic label to identify the object (e.g., "drill", "hammer")
-        waypoints: List of (x, y, z) world coordinates for the path
-        orientations: Optional list of quaternions (w, x, y, z) for each waypoint
-        animation_duration: Total duration of the animation in seconds
-        output_path: Path for the output video file
-        fps: Frames per second for the output video
-        show_all_objects: Whether to show all objects or only the animated one
-        camera_distance: Distance of camera from scene center
-        camera_height: Height of camera above scene
-        camera_angle: Vertical angle of camera in degrees
-    """
-    # Initialize warp
-    wp.init()
+    if dataset is not None and len(dataset) > 0:
+        ref_camera = dataset.cameras[0]
+        width, height = int(ref_camera.width.item()), int(ref_camera.height.item())
+        fx, fy = ref_camera.fx.item(), ref_camera.fy.item()
+        cx, cy = ref_camera.cx.item(), ref_camera.cy.item()
+    else:
+        width, height = 640, 480
+        fx = fy = 500.0
+        cx, cy = width / 2.0, height / 2.0
     
-    # Initialize CLIP model
+    K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
+    dummy_cam_pose = torch.from_numpy(np.eye(4)[:3, :]).float()[None, :]
+    
+    optimizer = Optimizer(config_path, K, width, height, init_cam_pose=dummy_cam_pose)
+    del temp_pipeline
+    time.sleep(2)  # Wait for optimizer to load
+    
+    return optimizer
+
+
+def find_target_object(optimizer: Optimizer, semantic_query: str) -> int:
+    """Find object index matching the semantic query."""
     clip_encoder = OpenCLIPNetworkConfig(
         clip_model_type="ViT-B-16", 
         clip_model_pretrained="laion2b_s34b_b88k", 
@@ -237,163 +257,90 @@ def main(
         device='cuda:0'
     ).setup()
     
-    # Load the optimizer first to get scene information
+    clip_encoder.set_positives([semantic_query])
+    relevancy = optimizer.get_clip_relevancy(clip_encoder)
+    group_masks = optimizer.optimizer.group_masks
+    
+    relevancy_avg = [torch.mean(relevancy[:, 0:1][mask]) for mask in group_masks]
+    target_idx = torch.argmax(torch.tensor(relevancy_avg)).item()
+    
+    print(f"Found object '{semantic_query}' at index {target_idx}")
+    return target_idx
+
+
+def create_camera_from_calibration(calibration_file: str, optimizer: Optimizer) -> Cameras:
+    """Create camera from calibration file and dataset parameters."""
+    # Load calibration
+    camera_position, rotation_matrix = load_camera_calibration(calibration_file)
+    print(f"Camera position: {camera_position}")
+    
+    # Create camera-to-world transform
+    cam2world = np.eye(4)
+    cam2world[:3, :3] = rotation_matrix.T  # Transpose for camera-to-world
+    cam2world[:3, 3] = camera_position
+    
+    # Convert to OpenGL format for nerfstudio
+    opengl_tf = cam2world @ trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0])
+    
+    # Get camera intrinsics from dataset
+    dataset = optimizer.pipeline.datamanager.train_dataset
+    if dataset is not None and len(dataset) > 0:
+        ref_camera = dataset.cameras[0]
+        fx, fy = ref_camera.fx.item(), ref_camera.fy.item()
+        cx, cy = ref_camera.cx.item(), ref_camera.cy.item()
+        width, height = int(ref_camera.width.item()), int(ref_camera.height.item())
+    else:
+        fx = fy = 500.0
+        cx, cy = 320.0, 240.0
+        width, height = 640, 480
+    
+    # Create camera
+    camera = Cameras(
+        camera_to_worlds=torch.from_numpy(opengl_tf[:3, :]).float()[None, :],
+        fx=fx, fy=fy, cx=cx, cy=cy, width=width, height=height
+    )
+    
+    # Scale to nerfstudio coordinates
+    camera.camera_to_worlds[:, :3, 3] *= optimizer.dataset_scale
+    print(f"Final camera position: {camera.camera_to_worlds[0, :3, 3]}")
+    
+    return camera
+
+
+def main(
+    config_path: Path = Path("/home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-07-23_204143/config.yml"),
+    semantic_query: str = "box cutter",
+    waypoints: List[Tuple[float, float, float]] = [(-0.33, 0.08, 0.028), (-0.33, 0.04, 0.03), (-0.34, -0.02, 0.03), (-0.34, -0.09, 0.04)],
+    orientations: Optional[List[Tuple[float, float, float, float]]] = None,
+    animation_duration: float = 5.0,
+    output_path: str = "gaussian_animation.mp4",
+    fps: int = 30,
+    show_all_objects: bool = True,
+    calibration_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/src/pogs/calibration_outputs/world_to_d405.tf",
+):
+    """Animate Gaussian splats along a specified path using camera calibration."""
+    # Initialize
+    wp.init()
     print("Loading model...")
     
-    # Use a dummy camera just for initialization (matching track_main_online_demo.py approach)
-    dummy_camera_tf = np.eye(4)
+    # Setup optimizer and find target object
+    optimizer = setup_optimizer(config_path)
+    target_object_idx = find_target_object(optimizer, semantic_query)
     
-    # Get dataset first to get proper camera dimensions
-    from nerfstudio.utils.eval_utils import eval_setup
-    _, temp_pipeline, _, _ = eval_setup(config_path)
-    dataset = temp_pipeline.datamanager.train_dataset
+    # Create camera from calibration
+    camera = create_camera_from_calibration(calibration_file, optimizer)
     
-    if dataset is not None and len(dataset) > 0:
-        # Use the first camera's properties as reference for initialization
-        ref_camera = dataset.cameras[0]
-        init_width = int(ref_camera.width.item())
-        init_height = int(ref_camera.height.item())
-        init_fx = ref_camera.fx.item()
-        init_fy = ref_camera.fy.item()
-        init_cx = ref_camera.cx.item()
-        init_cy = ref_camera.cy.item()
-    else:
-        # Fallback to reasonable defaults
-        init_width = 640
-        init_height = 480
-        init_fx = init_fy = 500.0
-        init_cx = init_width / 2.0
-        init_cy = init_height / 2.0
-    
-    dummy_K = np.array([[init_fx, 0.0, init_cx], [0.0, init_fy, init_cy], [0.0, 0.0, 1.0]], dtype=np.float64)
-    
-    toad_opt = Optimizer(
-        config_path,
-        dummy_K,
-        init_width,
-        init_height,
-        init_cam_pose=torch.from_numpy(dummy_camera_tf[:3, :]).float()[None, :],
-    )
-    
-    del temp_pipeline  # Clean up temporary pipeline
-    
-    # Wait for optimizer to load
-    time.sleep(2)
-    
-    # Find the object matching the semantic query
-    clip_encoder.set_positives([semantic_query])
-    
-    # Get relevancy scores
-    relevancy = toad_opt.get_clip_relevancy(clip_encoder)
-    group_masks = toad_opt.optimizer.group_masks
-    
-    # Find object with highest relevancy
-    relevancy_avg = []
-    for mask in group_masks:
-        relevancy_avg.append(torch.mean(relevancy[:, 0:1][mask]))
-    relevancy_avg = torch.tensor(relevancy_avg)
-    target_object_idx = torch.argmax(relevancy_avg).item()
-    
-    print(f"Found object with semantic label '{semantic_query}' at index {target_object_idx}")
-    
-    # Get the scene bounds from waypoints to position camera properly
-    waypoints_array = np.array(waypoints)
-    
-    # Get initial object positions from the optimizer to better center the camera
-    parts2world = toad_opt.get_parts2world()
-    object_positions = np.array([tf.translation() for tf in parts2world])
-    
-    # Use the actual object center as the look-at point
-    look_at = np.mean(object_positions, axis=0)
-    
-    # Position camera at a reasonable distance from the objects
-    max_extent = np.max(np.linalg.norm(object_positions - look_at, axis=1))
-    camera_distance = max(camera_distance, max_extent * 2.5)  # Ensure camera is far enough
-    
-    # Calculate camera position based on the object center
-    camera_angle_rad = np.radians(camera_angle)
-    camera_x = look_at[0] + camera_distance * np.cos(camera_angle_rad)
-    camera_y = look_at[1] - camera_distance * 0.3  # Slight offset for better viewing angle
-    camera_z = look_at[2] + camera_height + camera_distance * np.sin(camera_angle_rad)
-    
-    camera_position = np.array([camera_x, camera_y, camera_z])
-    up = np.array([0, 0, 1])
-    
-    # Calculate camera rotation matrix (look-at matrix)
-    forward = look_at - camera_position
-    forward = forward / np.linalg.norm(forward)
-    right = np.cross(forward, up)
-    right = right / np.linalg.norm(right)
-    up = np.cross(right, forward)
-    
-    # Build camera transformation matrix (world to camera, OpenCV convention)
-    camera_tf = np.eye(4)
-    camera_tf[:3, 0] = right
-    camera_tf[:3, 1] = -up  # OpenCV has Y pointing down
-    camera_tf[:3, 2] = -forward  # OpenCV has Z pointing away from scene
-    camera_tf[:3, 3] = camera_position
-    
-    # Convert to camera-to-world matrix (inverse of world-to-camera)
-    cam2world_tf = np.linalg.inv(camera_tf)
-    
-    # Convert to OpenGL format for nerfstudio (same as in track_main_online_demo.py)
-    opengl_tf = cam2world_tf @ trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0])
-    
-    # Use the proper camera intrinsics from the dataset
-    dataset = toad_opt.pipeline.datamanager.train_dataset
-    if dataset is not None and len(dataset) > 0:
-        # Use the first camera's intrinsics as reference
-        ref_camera = dataset.cameras[0]
-        fx = ref_camera.fx.item()
-        fy = ref_camera.fy.item()
-        cx = ref_camera.cx.item()
-        cy = ref_camera.cy.item()
-        width = int(ref_camera.width.item())
-        height = int(ref_camera.height.item())
-    else:
-        # Use the initialization values as fallback
-        fx = init_fx
-        fy = init_fy
-        cx = init_cx
-        cy = init_cy
-        width = init_width
-        height = init_height
-    
-    # Create proper camera for rendering (similar to track_main_online_demo.py)
-    render_camera = Cameras(
-        camera_to_worlds=torch.from_numpy(opengl_tf[:3, :]).float()[None, :],
-        fx=fx,
-        fy=fy,
-        cx=cx,
-        cy=cy,
-        width=int(width),
-        height=int(height),
-    )
-    
-    # Scale camera transform to nerfstudio coordinates (matching dataset scale)
-    render_camera.camera_to_worlds[:, :3, 3] *= toad_opt.dataset_scale
-    
-    print(f"Camera position: {camera_position}")
-    print(f"Looking at: {look_at}")
-    print(f"Object center: {look_at}")
-    print(f"Scene bounds: {waypoints_array.min(axis=0)} to {waypoints_array.max(axis=0)}")
-    print(f"Camera distance: {camera_distance}")
-    print(f"Dataset scale: {toad_opt.dataset_scale}")
-    print(f"Camera intrinsics: fx={fx}, fy={fy}, cx={cx}, cy={cy}")
-    
-    # If not showing all objects, mask out others
+    # Optionally hide other objects
+    original_opacities = None
     if not show_all_objects:
-        # Store original opacities
-        original_opacities = toad_opt.pipeline.model.gauss_params["opacities"].clone()
-        
-        # Set opacities of other objects to very low
-        for idx, mask in enumerate(toad_opt.group_masks_global):
+        original_opacities = optimizer.pipeline.model.gauss_params["opacities"].clone()
+        for idx, mask in enumerate(optimizer.group_masks_global):
             if idx != target_object_idx:
-                toad_opt.pipeline.model.gauss_params["opacities"][mask] = -10.0
+                optimizer.pipeline.model.gauss_params["opacities"][mask] = -10.0
     
-    # Create the animator
+    # Create animator and generate frames
     animator = GaussianAnimator(
-        optimizer=toad_opt,
+        optimizer=optimizer,
         object_idx=target_object_idx,
         waypoints=waypoints,
         orientations=orientations,
@@ -401,18 +348,17 @@ def main(
         fps=fps
     )
     
-    # Generate animation frames
     print("Generating animation...")
-    frames = animator.animate(render_camera)
+    frames = animator.animate(camera)
     
     # Save video
     print(f"Saving video to {output_path}...")
     out_clip = mpy.ImageSequenceClip(frames, fps=fps)
     out_clip.write_videofile(output_path, codec='libx264')
     
-    # Restore original opacities if modified
-    if not show_all_objects:
-        toad_opt.pipeline.model.gauss_params["opacities"] = original_opacities
+    # Restore original opacities
+    if original_opacities is not None:
+        optimizer.pipeline.model.gauss_params["opacities"] = original_opacities
     
     print(f"Animation complete! Video saved to {output_path}")
 
