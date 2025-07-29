@@ -264,7 +264,7 @@ def main(scene_name="realsense_scene"):
     clear_tcp(robot)
     
     # Move to home position
-    home_joints = np.array([0.11, -2.0, 1.2394, -0.75074, -1.64462, 3.29472])
+    home_joints = np.array([0.07497743517160416, -2.0328524748431605, 1.277921199798584, -0.8172596136676233, -1.5602710882769983, 3.2171106338500977])
     robot.move_joint(home_joints, vel=1.0, acc=0.1)
     robot.gripper.open()
     print("✓ Robot initialized and moved to home position")

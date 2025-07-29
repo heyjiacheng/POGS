@@ -73,16 +73,16 @@ def generate_grasps(seg_np_path, full_np_path, pc_bounding_box_path, ckpt_dir, z
     pre_grasp_point_world.transform(pre_grasp_world_frame)
 
     #o3d.visualization.draw_geometries([point_cloud_world,coordinate_frame,grasp_point_world,pre_grasp_point_world])    
-    np.save(f'{FLAGS.save_dir}/pred_grasps_world.npy', pred_grasps_world[0])
+    np.save(f'{save_dir}/pred_grasps_world.npy', pred_grasps_world[0])
 
-    np.save(f'{FLAGS.save_dir}/scores.npy', scores[0])
+    np.save(f'{save_dir}/scores.npy', scores[0])
 
-    np.save(f'{FLAGS.save_dir}/contact_pts.npy', contact_pts[0])
+    np.save(f'{save_dir}/contact_pts.npy', contact_pts[0])
 
-    np.save(f'{FLAGS.save_dir}/point_cloud_world.npy', points_world)
-    np.save(f'{FLAGS.save_dir}/rgb_cloud_world.npy', pc_colors)
-    np.save(f'{FLAGS.save_dir}/grasp_point_world.npy', final_grasp_world_frame)
-    np.save(f'{FLAGS.save_dir}/pre_grasp_point_world.npy', pre_grasp_world_frame)
+    np.save(f'{save_dir}/point_cloud_world.npy', points_world)
+    np.save(f'{save_dir}/rgb_cloud_world.npy', pc_colors)
+    np.save(f'{save_dir}/grasp_point_world.npy', final_grasp_world_frame)
+    np.save(f'{save_dir}/pre_grasp_point_world.npy', pre_grasp_world_frame)
 
     return pred_grasps_world, scores[0]
 

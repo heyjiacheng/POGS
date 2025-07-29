@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import tyro
 import time
+import json
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -310,8 +311,7 @@ def create_camera_from_calibration(calibration_file: str, optimizer: Optimizer) 
 def main(
     config_path: Path = Path("outputs/box/pogs/2025-07-29_151651/config.yml"),
     semantic_query: str = "box cutter",
-    waypoints: List[Tuple[float, float, float]] = [(-0.33, 0.08, 0.028), (-0.33, 0.04, 0.03), (-0.34, -0.02, 0.03), (-0.34, -0.09, 0.04)],
-    orientations: Optional[List[Tuple[float, float, float, float]]] = None,
+    waypoints_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/all_subgoals.json",
     animation_duration: float = 5.0,
     output_path: str = "gaussian_animation.mp4",
     fps: int = 30,
@@ -322,6 +322,19 @@ def main(
     # Initialize
     wp.init()
     print("Loading model...")
+    
+    # Load waypoints from JSON file
+    with open(waypoints_file, 'r') as f:
+        data = json.load(f)
+    
+    # Extract waypoints (positions only) from all subgoal_pose
+    waypoints = []
+    for subgoal in data['subgoals']:
+        subgoal_pose = subgoal['subgoal_pose']
+        # Extract only the position (first 3 elements: x, y, z)
+        waypoints.append((subgoal_pose[0], subgoal_pose[1], subgoal_pose[2]))
+    
+    print(f"Loaded {len(waypoints)} waypoints from {waypoints_file}")
     
     # Setup optimizer and find target object
     optimizer = setup_optimizer(config_path)
@@ -339,11 +352,12 @@ def main(
                 optimizer.pipeline.model.gauss_params["opacities"][mask] = -10.0
     
     # Create animator and generate frames
+    # orientations=None will use the original object's quaternion for all waypoints
     animator = GaussianAnimator(
         optimizer=optimizer,
         object_idx=target_object_idx,
         waypoints=waypoints,
-        orientations=orientations,
+        orientations=None,  # Use original object's quaternion
         duration=animation_duration,
         fps=fps
     )
