@@ -5,6 +5,7 @@ import time
 import json
 from pathlib import Path
 from typing import List, Tuple, Optional
+import random
 
 import warp as wp
 import moviepy as mpy
@@ -637,6 +638,165 @@ def load_waypoints_from_json(waypoints_file: str) -> List[Tuple[float, float, fl
     return waypoints
 
 
+def generate_random_poses(base_position: np.ndarray, base_orientation: np.ndarray, 
+                         num_poses: int = 60, max_translation: float = 0.05, 
+                         min_z: float = 0.005, max_rotation_deg: float = 180.0) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Generate random poses around a base pose with constraints.
+    
+    Args:
+        base_position: Base position [x, y, z]
+        base_orientation: Base orientation quaternion [w, x, y, z]
+        num_poses: Number of random poses to generate
+        max_translation: Maximum translation in each axis (meters)
+        min_z: Minimum z-coordinate (above table surface)
+        max_rotation_deg: Maximum rotation in each axis (degrees)
+    
+    Returns:
+        Tuple of (positions, orientations) lists
+    """
+    print(f"Generating {num_poses} random poses...")
+    print(f"Base position: [{base_position[0]:.6f}, {base_position[1]:.6f}, {base_position[2]:.6f}]")
+    print(f"Translation constraints: ±{max_translation}m per axis, z ≥ {min_z}m")
+    print(f"Rotation constraints: ±{max_rotation_deg}° per axis")
+    
+    positions = []
+    orientations = []
+    
+    # Convert base orientation to rotation matrix
+    base_rot_xyzw = np.array([base_orientation[1], base_orientation[2], base_orientation[3], base_orientation[0]])
+    base_rotation = R.from_quat(base_rot_xyzw)
+    
+    # Set random seed for reproducibility
+    np.random.seed(42)
+    random.seed(42)
+    
+    for i in range(num_poses):
+        # Generate random translation
+        translation_offset = np.random.uniform(-max_translation, max_translation, 3)
+        new_position = base_position + translation_offset
+        
+        # Ensure z constraint
+        new_position[2] = max(new_position[2], min_z)
+        
+        # Generate random rotation
+        max_rotation_rad = np.radians(max_rotation_deg)
+        rotation_angles = np.random.uniform(-max_rotation_rad, max_rotation_rad, 3)
+        
+        # Create rotation from Euler angles
+        random_rotation = R.from_euler('xyz', rotation_angles)
+        
+        # Combine with base rotation
+        final_rotation = base_rotation * random_rotation
+        
+        # Convert back to wxyz quaternion format
+        quat_xyzw = final_rotation.as_quat()
+        final_orientation = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+        
+        positions.append(new_position)
+        orientations.append(final_orientation)
+        
+        if (i + 1) % 10 == 0:
+            print(f"  Generated {i + 1}/{num_poses} poses")
+    
+    print(f"Successfully generated {len(positions)} random poses")
+    return positions, orientations
+
+
+def save_pose_data(animator: GaussianPointCloudAnimator, camera, position: np.ndarray, 
+                   orientation: np.ndarray, pose_idx: int, output_base_dir: str = "outputs",
+                   timestamp: str = None) -> Path:
+    """Save both Gaussian render and point cloud data for a specific pose.
+    
+    Args:
+        animator: The GaussianPointCloudAnimator instance
+        camera: Camera for rendering Gaussian images
+        position: Object position
+        orientation: Object orientation quaternion [w, x, y, z]
+        pose_idx: Pose index for naming
+        output_base_dir: Base output directory
+        timestamp: Timestamp for directory naming
+        
+    Returns:
+        Path to the saved pose directory
+    """
+    from datetime import datetime
+    
+    # Use provided timestamp or generate new one
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    # Create output directory for this pose
+    pose_dir = Path(output_base_dir) / f"random_poses_{timestamp}" / f"pose_{pose_idx:03d}"
+    pose_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Update object pose
+    animator.update_object_pose(position, orientation)
+    
+    # Render Gaussian image
+    gaussian_image = animator.render_frame(camera)
+    
+    # Save Gaussian render as PNG
+    gaussian_path = pose_dir / "gaussian_render.png"
+    from PIL import Image
+    gaussian_pil = Image.fromarray(gaussian_image)
+    gaussian_pil.save(gaussian_path)
+    
+    # Generate and save point cloud data
+    transformed_target_pcd = animator.generate_transformed_target_pointcloud(position, orientation)
+    
+    # Save individual point clouds
+    target_pcd_path = pose_dir / "moving_object.ply"
+    static_pcd_path = pose_dir / "static_objects.ply"
+    combined_pcd_path = pose_dir / "complete_scene.ply"
+    
+    # Save moving object point cloud
+    o3d.io.write_point_cloud(str(target_pcd_path), transformed_target_pcd)
+    
+    # Save static objects point cloud
+    o3d.io.write_point_cloud(str(static_pcd_path), animator.static_objects_pcd)
+    
+    # Create and save combined scene
+    combined_pcd = o3d.geometry.PointCloud()
+    
+    # Combine points
+    transformed_points = np.asarray(transformed_target_pcd.points)
+    static_points = np.asarray(animator.static_objects_pcd.points)
+    all_points = np.vstack([transformed_points, static_points])
+    combined_pcd.points = o3d.utility.Vector3dVector(all_points)
+    
+    # Combine colors if available
+    if len(transformed_target_pcd.colors) > 0 and len(animator.static_objects_pcd.colors) > 0:
+        transformed_colors = np.asarray(transformed_target_pcd.colors)
+        static_colors = np.asarray(animator.static_objects_pcd.colors)
+        all_colors = np.vstack([transformed_colors, static_colors])
+        combined_pcd.colors = o3d.utility.Vector3dVector(all_colors)
+    
+    o3d.io.write_point_cloud(str(combined_pcd_path), combined_pcd)
+    
+    # Save metadata
+    metadata = {
+        "pose_index": pose_idx,
+        "position": position.tolist(),
+        "orientation_wxyz": orientation.tolist(),
+        "moving_object_points": len(transformed_target_pcd.points),
+        "static_objects_points": len(animator.static_objects_pcd.points),
+        "total_scene_points": len(combined_pcd.points),
+        "moving_object_centroid": transformed_target_pcd.get_center().tolist(),
+        "files": {
+            "gaussian_render": "gaussian_render.png",
+            "moving_object": "moving_object.ply",
+            "static_objects": "static_objects.ply",
+            "complete_scene": "complete_scene.ply"
+        }
+    }
+    
+    metadata_path = pose_dir / "metadata.json"
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    return pose_dir
+
+
 def main(
     config_path: Path = Path("outputs/box/pogs/2025-07-29_151651/config.yml"),
     pointcloud_path: str = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/box/prime_seg_gaussians.ply",
@@ -648,6 +808,11 @@ def main(
     fps: int = 30,
     show_all_objects: bool = True,
     calibration_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/src/pogs/calibration_outputs/world_to_d405.tf",
+    enable_random_poses: bool = True,
+    num_random_poses: int = 60,
+    max_translation: float = 0.05,
+    max_rotation_deg: float = 180.0,
+    min_z: float = 0.005,
 ):
     """Analyze both Gaussian splats and point cloud movement for a target object, with optional video generation.
     
@@ -662,6 +827,11 @@ def main(
         fps: Frames per second for video output
         show_all_objects: Whether to show all objects in video or only target object
         calibration_file: Path to camera calibration file
+        enable_random_poses: Whether to generate random poses after waypoint processing
+        num_random_poses: Number of random poses to generate
+        max_translation: Maximum translation per axis in meters
+        max_rotation_deg: Maximum rotation per axis in degrees
+        min_z: Minimum z-coordinate (above table surface)
     """
     # Initialize
     wp.init()
@@ -687,6 +857,69 @@ def main(
     print("\nGenerating scene animation data...")
     # Generate and save complete scene data at each waypoint
     saved_directories = animator.generate_and_save_scene_animation(semantic_query)
+    
+    # Generate random poses if requested
+    random_pose_dirs = []
+    if enable_random_poses:
+        print(f"\n=== GENERATING RANDOM POSES ===")
+        
+        # Use the final waypoint as the base pose for random generation
+        final_waypoint = waypoints[-1]
+        base_position = np.array(final_waypoint)
+        
+        # Use the original object orientation as base orientation
+        base_orientation = animator.orientations[-1]  # Final orientation from waypoints
+        
+        print(f"Using final waypoint as base for random poses:")
+        print(f"Base position: [{base_position[0]:.6f}, {base_position[1]:.6f}, {base_position[2]:.6f}]")
+        print(f"Base orientation: [{base_orientation[0]:.6f}, {base_orientation[1]:.6f}, {base_orientation[2]:.6f}, {base_orientation[3]:.6f}]")
+        
+        # Generate random poses
+        random_positions, random_orientations = generate_random_poses(
+            base_position=base_position,
+            base_orientation=base_orientation,
+            num_poses=num_random_poses,
+            max_translation=max_translation,
+            min_z=min_z,
+            max_rotation_deg=max_rotation_deg
+        )
+        
+        # Create camera for rendering
+        camera = create_camera_from_calibration(calibration_file, optimizer)
+        
+        # Generate timestamp for random poses
+        from datetime import datetime
+        random_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        
+        print(f"\nSaving random pose data...")
+        for i, (pos, orient) in enumerate(zip(random_positions, random_orientations)):
+            pose_dir = save_pose_data(
+                animator=animator,
+                camera=camera,
+                position=pos,
+                orientation=orient,
+                pose_idx=i,
+                output_base_dir="outputs",
+                timestamp=random_timestamp
+            )
+            random_pose_dirs.append(pose_dir)
+            
+            if (i + 1) % 10 == 0:
+                print(f"  Saved {i + 1}/{num_random_poses} poses")
+        
+        # Reset to original pose
+        animator.optimizer.optimizer.part_deltas = animator.original_part_deltas.clone()
+        
+        print(f"\n=== RANDOM POSE GENERATION COMPLETE ===")
+        print(f"Generated {len(random_pose_dirs)} random poses")
+        print(f"Random pose data saved to: outputs/random_poses_{random_timestamp}/")
+        
+        # Summary of generated poses
+        distances = [np.linalg.norm(pos - base_position) for pos in random_positions]
+        print(f"Translation distances: min={min(distances):.4f}m, max={max(distances):.4f}m, avg={np.mean(distances):.4f}m")
+        
+        z_values = [pos[2] for pos in random_positions]
+        print(f"Z-coordinates: min={min(z_values):.4f}m, max={max(z_values):.4f}m")
     
     # Generate video if requested
     if generate_video:
@@ -720,6 +953,8 @@ def main(
     
     print(f"\nAnimation complete!")
     print(f"Point cloud scene data saved to {len(saved_directories)} directories")
+    if enable_random_poses:
+        print(f"Random pose data saved to {len(random_pose_dirs)} directories")
     if generate_video:
         print(f"MP4 video saved to: {output_video_path}")
 
