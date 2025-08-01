@@ -204,11 +204,14 @@ class AutoPipeline:
                     print(f"Warning: {img_path} appears to be empty or corrupted")
                     continue
 
-                # Optional: limit resolution
                 h, w = img.shape[:2]
-                if h > 800 or w > 1200:
-                    scale = min(800/h, 1200/w)
+                w = w * 2
+                h = h * 2
+                img = cv2.resize(img, (w, h))
+                if h > 1600 or w > 2400:
+                    scale = min(1600/h, 2400/w)
                     img = cv2.resize(img, (int(w*scale), int(h*scale)))
+
 
                 # Add instruction text on the image
                 instruction_text = "Press any key to continue"
@@ -229,7 +232,7 @@ class AutoPipeline:
             print("Error: No rekep program directory provided")
             return None
         
-        instruction = "Drop the box cutter into the blue box."
+        instruction = "Put the box cutter into the blue box."
         
         # Run robot action as subprocess
         action_script = os.path.join(self.script_dir, "real_action.py")

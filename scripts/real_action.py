@@ -242,7 +242,7 @@ class RobotController:
         subgoal_pose[3:7] = self.curr_ee_pose[3:7]
         
         # Apply grasp offset
-        subgoal_pose = self._apply_grasp_offset(subgoal_pose)
+        # subgoal_pose = self._apply_grasp_offset(subgoal_pose)
         
         return subgoal_pose
 
