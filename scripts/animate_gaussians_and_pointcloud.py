@@ -7,11 +7,40 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 
 import warp as wp
+import moviepy as mpy
+import trimesh
 import open3d as o3d
 from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Slerp
 
 from pogs.tracking.optim import Optimizer
 from pogs.encoders.openclip_encoder import OpenCLIPNetworkConfig
+from nerfstudio.cameras.cameras import Cameras
+
+
+def load_camera_calibration(tf_file_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """Load camera position and rotation from calibration file.
+    
+    Args:
+        tf_file_path: Path to world_to_d405.tf calibration file
+        
+    Returns:
+        Tuple of (camera_position, rotation_matrix):
+        - camera_position: 3D position in world coordinates  
+        - rotation_matrix: 3x3 world-to-camera rotation matrix
+    """
+    with open(tf_file_path, 'r') as f:
+        lines = f.readlines()
+    
+    # Line 3: camera position in world coordinates
+    camera_position = np.array([float(x) for x in lines[2].strip().split()])
+    
+    # Lines 4-6: rotation matrix
+    rotation_matrix = np.zeros((3, 3))
+    for i, line in enumerate(lines[3:6]):
+        rotation_matrix[i] = [float(x) for x in line.strip().split()]
+    
+    return camera_position, rotation_matrix
 
 
 class GaussianPointCloudAnimator:
@@ -278,6 +307,85 @@ class GaussianPointCloudAnimator:
         
         return transformed_pcd
     
+    def render_frame(self, camera):
+        """Render a single frame with the current object pose."""
+        # Apply the current transformations to the model
+        self.optimizer.optimizer.apply_to_model(
+            self.optimizer.optimizer.part_deltas,
+            self.optimizer.optimizer.group_labels
+        )
+        
+        # Render the scene
+        outputs = self.optimizer.pipeline.model.get_outputs(
+            camera.to('cuda'),
+            tracking=False,
+            BLOCK_WIDTH=16,
+            rgb_only=True
+        )
+        
+        # Extract RGB image
+        rgb_image = outputs["rgb"].squeeze().detach().cpu().numpy()
+        return (rgb_image * 255).astype(np.uint8)
+    
+    def animate(self, camera, duration: float = 10.0, fps: int = 30) -> List[np.ndarray]:
+        """Generate animation frames for video output."""
+        total_frames = int(duration * fps)
+        frames = []
+        
+        print(f"Generating {total_frames} frames for video...")
+        
+        for frame_idx in range(total_frames):
+            t = frame_idx / (total_frames - 1) if total_frames > 1 else 0
+            
+            # Calculate which waypoint segment we're in
+            num_segments = len(self.waypoints) - 1
+            if num_segments == 0:
+                current_pos = self.waypoints[0]
+                current_orient = self.orientations[0]
+            else:
+                segment_duration = 1.0 / num_segments
+                segment_idx = int(t / segment_duration)
+                segment_t = (t - segment_idx * segment_duration) / segment_duration
+                
+                # Ensure we don't go out of bounds
+                segment_idx = min(segment_idx, num_segments - 1)
+                
+                # Linear interpolation for position
+                start_pos = self.waypoints[segment_idx]
+                end_pos = self.waypoints[segment_idx + 1]
+                current_pos = start_pos + segment_t * (end_pos - start_pos)
+                
+                # SLERP for orientation
+                start_orient = self.orientations[segment_idx]
+                end_orient = self.orientations[segment_idx + 1]
+                
+                # Convert to scipy Rotation objects for SLERP
+                rot_start = R.from_quat([start_orient[1], start_orient[2], start_orient[3], start_orient[0]])
+                rot_end = R.from_quat([end_orient[1], end_orient[2], end_orient[3], end_orient[0]])
+                
+                # Create slerp interpolator
+                slerp = Slerp([0, 1], R.from_quat([rot_start.as_quat(), rot_end.as_quat()]))
+                interpolated = slerp(segment_t)
+                
+                # Convert back to wxyz format
+                quat_xyzw = interpolated.as_quat()
+                current_orient = np.array([quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]])
+            
+            # Update object pose
+            self.update_object_pose(current_pos, current_orient)
+            
+            # Render frame
+            frame = self.render_frame(camera)
+            frames.append(frame)
+            
+            if frame_idx % 10 == 0:
+                print(f"  Frame {frame_idx}/{total_frames}")
+        
+        # Reset to original pose
+        self.optimizer.optimizer.part_deltas = self.original_part_deltas.clone()
+        
+        return frames
+    
     def save_scene_at_waypoint(self, waypoint_idx: int, position: np.ndarray, orientation: np.ndarray, output_base_dir: str = "outputs", timestamp: str = None):
         """Save complete scene point cloud data at a specific waypoint."""
         from pathlib import Path
@@ -475,6 +583,45 @@ def find_target_object(optimizer: Optimizer, semantic_query: str) -> int:
     return target_idx
 
 
+def create_camera_from_calibration(calibration_file: str, optimizer: Optimizer) -> Cameras:
+    """Create camera from calibration file and dataset parameters."""
+    # Load calibration
+    camera_position, rotation_matrix = load_camera_calibration(calibration_file)
+    print(f"Camera position: {camera_position}")
+    
+    # Create camera-to-world transform
+    cam2world = np.eye(4)
+    cam2world[:3, :3] = rotation_matrix.T  # Transpose for camera-to-world
+    cam2world[:3, 3] = camera_position
+    
+    # Convert to OpenGL format for nerfstudio
+    opengl_tf = cam2world @ trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0])
+    
+    # Get camera intrinsics from dataset
+    dataset = optimizer.pipeline.datamanager.train_dataset
+    if dataset is not None and len(dataset) > 0:
+        ref_camera = dataset.cameras[0]
+        fx, fy = ref_camera.fx.item(), ref_camera.fy.item()
+        cx, cy = ref_camera.cx.item(), ref_camera.cy.item()
+        width, height = int(ref_camera.width.item()), int(ref_camera.height.item())
+    else:
+        fx = fy = 500.0
+        cx, cy = 320.0, 240.0
+        width, height = 640, 480
+    
+    # Create camera
+    camera = Cameras(
+        camera_to_worlds=torch.from_numpy(opengl_tf[:3, :]).float()[None, :],
+        fx=fx, fy=fy, cx=cx, cy=cy, width=width, height=height
+    )
+    
+    # Scale to nerfstudio coordinates
+    camera.camera_to_worlds[:, :3, 3] *= optimizer.dataset_scale
+    print(f"Final camera position: {camera.camera_to_worlds[0, :3, 3]}")
+    
+    return camera
+
+
 def load_waypoints_from_json(waypoints_file: str) -> List[Tuple[float, float, float]]:
     """Load waypoints from JSON file."""
     with open(waypoints_file, 'r') as f:
@@ -495,14 +642,26 @@ def main(
     pointcloud_path: str = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/box/prime_seg_gaussians.ply",
     semantic_query: str = "box cutter",
     waypoints_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/all_subgoals.json",
+    generate_video: bool = True,
+    animation_duration: float = 5.0,
+    output_video_path: str = "gaussian_pointcloud_animation.mp4",
+    fps: int = 30,
+    show_all_objects: bool = True,
+    calibration_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/src/pogs/calibration_outputs/world_to_d405.tf",
 ):
-    """Analyze both Gaussian splats and point cloud movement for a target object.
+    """Analyze both Gaussian splats and point cloud movement for a target object, with optional video generation.
     
     Args:
         config_path: Path to POGS config file
         pointcloud_path: Path to the PLY point cloud file
         semantic_query: Semantic description of target object (e.g., "box cutter")
         waypoints_file: Path to JSON file containing waypoints
+        generate_video: Whether to generate MP4 animation video
+        animation_duration: Total animation duration in seconds (for video)
+        output_video_path: Path for output video file
+        fps: Frames per second for video output
+        show_all_objects: Whether to show all objects in video or only target object
+        calibration_file: Path to camera calibration file
     """
     # Initialize
     wp.init()
@@ -528,6 +687,41 @@ def main(
     print("\nGenerating scene animation data...")
     # Generate and save complete scene data at each waypoint
     saved_directories = animator.generate_and_save_scene_animation(semantic_query)
+    
+    # Generate video if requested
+    if generate_video:
+        print(f"\nGenerating MP4 animation video...")
+        
+        # Create camera from calibration
+        camera = create_camera_from_calibration(calibration_file, optimizer)
+        
+        # Optionally hide other objects for cleaner visualization
+        original_opacities = None
+        if not show_all_objects:
+            original_opacities = optimizer.pipeline.model.gauss_params["opacities"].clone()
+            group_masks_global = optimizer.optimizer.group_masks  # Use the correct attribute
+            for idx, mask in enumerate(group_masks_global):
+                if idx != target_object_idx:
+                    optimizer.pipeline.model.gauss_params["opacities"][mask] = -10.0
+        
+        # Generate animation frames
+        frames = animator.animate(camera, duration=animation_duration, fps=fps)
+        
+        # Save video
+        print(f"Saving video to {output_video_path}...")
+        out_clip = mpy.ImageSequenceClip(frames, fps=fps)
+        out_clip.write_videofile(output_video_path, codec='libx264')
+        
+        # Restore original opacities
+        if original_opacities is not None:
+            optimizer.pipeline.model.gauss_params["opacities"] = original_opacities
+        
+        print(f"Video generation complete! Saved to {output_video_path}")
+    
+    print(f"\nAnimation complete!")
+    print(f"Point cloud scene data saved to {len(saved_directories)} directories")
+    if generate_video:
+        print(f"MP4 video saved to: {output_video_path}")
 
 
 if __name__ == "__main__":
