@@ -68,8 +68,8 @@ pip install -e .
 """
 
 rekep = """
-pixi run -e rekep python scripts/auto_pipeline.py  &&
-pixi run python scripts/animate_gaussians.py
+pixi run python scripts/move_to_home.py &&
+pixi run -e rekep python scripts/auto_pipeline.py
 """
 
 [tool.pixi.dependencies]

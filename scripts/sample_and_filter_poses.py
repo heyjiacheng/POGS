@@ -22,7 +22,6 @@ import shutil
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 import random
-from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 from scipy.spatial import cKDTree
@@ -40,6 +39,32 @@ from nerfstudio.cameras.cameras import Cameras
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
+
+def find_latest_config(base_path: str = "outputs/box/pogs") -> Path:
+    """Find the latest config.yml file in the pogs output directories.
+    
+    Args:
+        base_path: Base directory to search for config files
+        
+    Returns:
+        Path to the latest config.yml file
+        
+    Raises:
+        FileNotFoundError: If no config files are found
+    """
+    base_dir = Path(base_path)
+    if not base_dir.exists():
+        raise FileNotFoundError(f"Base directory {base_path} does not exist")
+    
+    # Find all config.yml files in timestamped directories
+    config_files = list(base_dir.glob("*/config.yml"))
+    
+    if not config_files:
+        raise FileNotFoundError(f"No config.yml files found in {base_path}")
+    
+    # Sort by directory name (which contains timestamp) and get the latest
+    config_files.sort(key=lambda x: x.parent.name, reverse=True)
+    return config_files[0]
 
 def load_camera_calibration(tf_file_path: str) -> Tuple[np.ndarray, np.ndarray]:
     """Load camera position and rotation from calibration file.
@@ -628,17 +653,12 @@ class GaussianPointCloudAnimator:
         
         return frames
     
-    def save_scene_at_waypoint(self, waypoint_idx: int, position: np.ndarray, orientation: np.ndarray, output_base_dir: str = "outputs", timestamp: str = None):
+    def save_scene_at_waypoint(self, waypoint_idx: int, position: np.ndarray, orientation: np.ndarray, output_base_dir: str = "outputs"):
         """Save complete scene point cloud data at a specific waypoint."""
         from pathlib import Path
-        from datetime import datetime
         
-        # Use provided timestamp or generate new one
-        if timestamp is None:
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        
-        # Create output directory structure
-        scene_dir = Path(output_base_dir) / f"scene_animation_{timestamp}" / f"subgoal_{waypoint_idx+1}"
+        # Create output directory structure (no timestamp)
+        scene_dir = Path(output_base_dir) / "scene_animation" / f"subgoal_{waypoint_idx+1}"
         scene_dir.mkdir(parents=True, exist_ok=True)
         
         print(f"Saving scene data to: {scene_dir}")
@@ -699,8 +719,7 @@ class GaussianPointCloudAnimator:
     
     def generate_and_save_scene_animation(self, target_object_name: str, output_base_dir: str = "outputs"):
         """Generate and save complete scene point cloud data at each waypoint."""
-        from datetime import datetime
-        
+                
         print(f"\n=== {target_object_name.upper()} SCENE ANIMATION GENERATION ===")
         print(f"Original Gaussian position:    [{self.original_position[0]:8.6f}, {self.original_position[1]:8.6f}, {self.original_position[2]:8.6f}]")
         print(f"Original PointCloud centroid:  [{self.original_pcd_centroid[0]:8.6f}, {self.original_pcd_centroid[1]:8.6f}, {self.original_pcd_centroid[2]:8.6f}]")
@@ -709,8 +728,7 @@ class GaussianPointCloudAnimator:
         print(f"Generating scene data for {len(self.waypoints)} waypoints...")
         print()
         
-        # Generate single timestamp for all waypoints
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        # No timestamp needed - will overwrite previous output
         saved_dirs = []
         
         for i, waypoint in enumerate(self.waypoints):
@@ -747,7 +765,7 @@ class GaussianPointCloudAnimator:
             print(f"  PointCloud distance:    {np.linalg.norm(pcd_delta):8.6f}")
             
             # Save scene data at this waypoint
-            scene_dir = self.save_scene_at_waypoint(i, waypoint, orientation, output_base_dir, timestamp)
+            scene_dir = self.save_scene_at_waypoint(i, waypoint, orientation, output_base_dir)
             saved_dirs.append(scene_dir)
             print()
         
@@ -1139,7 +1157,7 @@ def create_new_subgoals_json(original_waypoints_file: str, selected_pose_data: O
             "replaced_final_waypoint": True,
             "selected_pose_index": selected_pose_data['index'],
             "rotation_difference_deg": selected_pose_data.get('rotation_difference_deg', 0.0),
-            "modification_timestamp": datetime.now().isoformat(),
+            "modification_timestamp": "modified",
             "transformation_note": "End effector pose calculated to maintain relative transform to target object"
         }
         
@@ -1168,7 +1186,7 @@ def create_new_subgoals_json(original_waypoints_file: str, selected_pose_data: O
         new_data['metadata'] = {
             "modified": False,
             "original_file": original_waypoints_file,
-            "modification_timestamp": datetime.now().isoformat()
+            "modification_timestamp": "modified"
         }
         print(f"\n=== KEEPING ORIGINAL SUBGOALS ===")
     
@@ -1263,10 +1281,10 @@ def generate_new_animation(existing_optimizer: Optimizer, existing_camera, point
 # =============================================================================
 
 def main(
-    config_path: Path = Path("outputs/box/pogs/2025-07-29_151651/config.yml"),
-    pointcloud_path: str = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/box/prime_seg_gaussians.ply",
+    config_path: Path = None,
+    pointcloud_path: str = "outputs/box/prime_seg_gaussians.ply",
     semantic_query: str = "box cutter",
-    waypoints_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/all_subgoals.json",
+    waypoints_file: str = "outputs/all_subgoals.json",
     generate_video: bool = True,
     animation_duration: float = 5.0,
     output_video_path: str = "outputs/test_videos/gaussian_pointcloud_animation.mp4",
@@ -1315,6 +1333,11 @@ def main(
     # Initialize
     wp.init()
     print("Loading model...")
+    
+    # Find latest config if not provided
+    if config_path is None:
+        config_path = find_latest_config()
+        print(f"Using latest config: {config_path}")
     
     # Load waypoints from JSON file
     waypoints = load_waypoints_from_json(waypoints_file)
@@ -1372,9 +1395,8 @@ def main(
         if camera is None:
             camera = create_camera_from_calibration(calibration_file, optimizer)
         
-        # Generate timestamp for random poses
-        from datetime import datetime
-        random_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        # Generate simple identifier for random poses
+        random_session = "random_poses"
         
         print(f"\nProcessing random poses for collision detection and ranking...")
         
@@ -1447,7 +1469,7 @@ def main(
             
             # Save only the top ranked poses
             num_to_save = min(max_ranked_poses or len(pose_rankings), len(pose_rankings))
-            ranked_output = f"outputs/ranked_poses_{random_timestamp}"
+            ranked_output = f"outputs/ranked_poses_{random_session}"
             ranked_path = Path(ranked_output)
             ranked_path.mkdir(parents=True, exist_ok=True)
             
@@ -1542,7 +1564,7 @@ def main(
                 "collision_poses_filtered": collision_count,
                 "total_ranked_poses": num_to_save,
                 "ranking_criteria": "rotation_difference_from_final_waypoint",
-                "ranking_timestamp": datetime.now().isoformat(),
+                "ranking_timestamp": "ranked",
                 "collision_threshold": collision_threshold,
                 "pose_rankings": ranking_info
             }

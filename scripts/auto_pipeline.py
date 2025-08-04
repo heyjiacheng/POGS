@@ -114,7 +114,7 @@ class AutoPipeline:
         print("\n=== Step 2: Vision Processing ===")
         
         # Default instruction
-        instruction = "Drop the box cutter into the blue box."
+        instruction = "Put the box cutter into the box."
         
         # Run vision processing as subprocess to avoid memory conflicts
         vision_script = os.path.join(self.script_dir, "real_vision.py")
