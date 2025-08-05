@@ -1,0 +1,66 @@
+# Default configuration for POGS animation pipeline
+
+# File paths
+pointcloud_path: "outputs/box/prime_seg_gaussians.ply"
+waypoints_file: "outputs/all_subgoals.json"
+calibration_file: "/home/jiachengxu/workspace/master_thesis/POGS/src/pogs/calibration_outputs/world_to_d405.tf"
+
+# Target object
+semantic_query: "box cutter"
+
+# Animation settings
+generate_video: true
+animation_duration: 5.0  # seconds
+fps: 30
+show_all_objects: true
+
+# Output paths
+output_video_path: "outputs/test_videos/gaussian_pointcloud_animation.mp4"
+output_base_dir: "outputs"
+
+# Random pose generation
+enable_random_poses: true
+num_random_poses: 1000
+max_translation: 0.1  # meters
+max_rotation_deg: 90.0  # degrees
+min_z: 0.001  # meters (above table surface)
+
+# Collision detection
+collision_threshold: 0.001  # meters
+
+# Pose ranking
+enable_pose_ranking: true
+max_ranked_poses: 20
+
+# Point cloud processing
+outlier_removal:
+  nb_neighbors: 20
+  std_ratio: 2.0
+
+# Gaussian extraction settings
+gaussian_extraction:
+  distance_threshold_adaptive: true
+  fallback_threshold: 0.01
+  bounding_box_margin: 0.05
+
+# Camera settings
+camera:
+  default_fx: 500.0
+  default_fy: 500.0
+  default_width: 640
+  default_height: 480
+
+# Animation interpolation
+interpolation:
+  position_method: "linear"
+  orientation_method: "slerp"
+
+# Pose generation constraints
+pose_constraints:
+  enforce_z_minimum: true
+  random_seed: 42
+
+# Interactive selection
+interactive:
+  max_display_poses: 10
+  enable_verification: true
