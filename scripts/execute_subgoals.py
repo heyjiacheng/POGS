@@ -130,7 +130,7 @@ class SubgoalExecutor:
 
 def main():
     """主函数"""
-    json_file_path = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/new_subgoals.json"
+    json_file_path = "/home/jiachengxu/workspace/master_thesis/POGS/outputs/action_subgoals.json"
     
     # 创建执行器并执行subgoals
     executor = SubgoalExecutor()

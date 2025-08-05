@@ -13,17 +13,17 @@ Suppose you are controlling a robot to perform manipulation tasks by writing con
       - 1 sub-goal constraints: "align the end-effector with the teapot handle"
       - 0 path constraints
     - "align teapot with cup opening" stage:
-      - 1 sub-goal constraints: "the end-effector needs to be 10cm above the cup opening"
+      - 1 sub-goal constraints: "align the end-effector with the cup opening"
       - 2 path constraints: "the robot must still be grasping the teapot handle", "the teapot must stay upright to avoid spilling"
     - "pour liquid" stage:
-      - 2 sub-goal constraints: "the teapot spout needs to be 5cm above the cup opening", "the teapot spout must be tilted to pour liquid"
+      - 2 sub-goal constraints: "align the teapot spout with the cup opening", "the teapot spout must be tilted to pour liquid"
       - 2 path constraints: "the robot must still be grasping the teapot handle", "the teapot spout is directly above the cup opening"
   - "put red block on top of blue block":
     - "grasp red block" stage:
       - 1 sub-goal constraints: "align the end-effector with the red block"
       - 0 path constraints
     - "drop the red block on top of blue block" stage:
-      - 1 sub-goal constraints: "the end-effector is 10cm on top of the blue block"
+      - 1 sub-goal constraints: "align the end-effector with the top of the blue block"
       - 1 path constraints: "the robot must still be grasping the red block"
   - "eorient bouquet and drop it upright into vase":
     - "grasp bouquet" stage:
@@ -33,7 +33,7 @@ Suppose you are controlling a robot to perform manipulation tasks by writing con
       - 1 sub-goal constraints: "the end-effector is upright (parallel to the z-axis)"
       - 1 path constraints: "the robot must still be grasping the bouquet stem"
     - "keep upright and drop into vase" stage:
-      - 2 sub-goal constraints: "the end-effector must still stay upright (parallel to the z-axis)", "the end-effector is 20cm above the vase opening"
+      - 2 sub-goal constraints: "the end-effector must still stay upright (parallel to the z-axis)", "the end-effector is above the vase opening"
       - 1 path constraints: "the robot must still be grasping the bouquet stem"
 - Summarize keypoints to be grasped in all grasping stages by defining the `grasp_keypoints` variable.
 - Summarize at the end of which stage the robot should release the keypoints by defining the `release_keypoints` variable.

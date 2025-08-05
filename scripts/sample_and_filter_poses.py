@@ -298,7 +298,21 @@ class GaussianPointCloudAnimator:
         if len(self.full_pcd.points) == 0:
             raise ValueError(f"Failed to load point cloud from {pointcloud_path}")
         
-        print(f"Loaded full point cloud with {len(self.full_pcd.points)} points")
+        # Filter out points with z < 0.001
+        full_points = np.asarray(self.full_pcd.points)
+        full_colors = np.asarray(self.full_pcd.colors) if len(self.full_pcd.colors) > 0 else None
+        
+        z_mask = full_points[:, 2] >= 0.001
+        filtered_points = full_points[z_mask]
+        
+        self.full_pcd = o3d.geometry.PointCloud()
+        self.full_pcd.points = o3d.utility.Vector3dVector(filtered_points)
+        
+        if full_colors is not None:
+            filtered_colors = full_colors[z_mask]
+            self.full_pcd.colors = o3d.utility.Vector3dVector(filtered_colors)
+        
+        print(f"Loaded full point cloud with {len(filtered_points)} points (filtered out {len(full_points) - len(filtered_points)} points with z < 0.001)")
         
         # Handle orientations
         if orientations is None:
@@ -1293,9 +1307,9 @@ def main(
     calibration_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/src/pogs/calibration_outputs/world_to_d405.tf",
     enable_random_poses: bool = True,
     num_random_poses: int = 1000,
-    max_translation: float = 0.05,
-    max_rotation_deg: float = 180.0,
-    min_z: float = 0.005,
+    max_translation: float = 0.1,
+    max_rotation_deg: float = 90.0,
+    min_z: float = 0.001,
     collision_threshold: float = 0.001,
     enable_pose_ranking: bool = True,
     max_ranked_poses: Optional[int] = 20,
