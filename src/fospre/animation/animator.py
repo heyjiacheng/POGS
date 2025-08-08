@@ -244,9 +244,10 @@ class GaussianPointCloudAnimator:
             relative_quat[2],  # z
         ], dtype=torch.float32, device=self.optimizer.optimizer.part_deltas.device)
         
-        # Update only the specific object's delta
-        self.optimizer.optimizer.part_deltas = self.original_part_deltas.clone()
-        self.optimizer.optimizer.part_deltas[self.object_idx] = new_delta
+        # Update only the specific object's delta while preserving others
+        current_deltas = self.optimizer.optimizer.part_deltas.detach().clone()
+        current_deltas[self.object_idx] = new_delta
+        self.optimizer.optimizer.part_deltas = current_deltas
     
     def generate_transformed_target_pointcloud(self, position: np.ndarray, orientation: np.ndarray) -> o3d.geometry.PointCloud:
         """Generate the actual transformed point cloud for the target object."""
@@ -354,3 +355,225 @@ class GaussianPointCloudAnimator:
         self.optimizer.optimizer.part_deltas = self.original_part_deltas.clone()
         
         return frames
+
+
+class MultiStageAnimator:
+    """Animator for handling multiple objects moving in sequence based on subgoal stages."""
+    
+    def __init__(self, optimizer: Optimizer, pointcloud_path: str, target_objects: List[Tuple[int, int]], 
+                 waypoints_file: str):
+        """Initialize multi-stage animator.
+        
+        Args:
+            optimizer: POGS optimizer containing the scene
+            pointcloud_path: Path to the PLY point cloud file
+            target_objects: List of (stage, object_idx) tuples in order
+            waypoints_file: Path to all_subgoals.json file
+        """
+        self.optimizer = optimizer
+        self.pointcloud_path = pointcloud_path
+        self.target_objects = target_objects
+        self.waypoints_file = waypoints_file
+        
+        # Load subgoals data
+        with open(waypoints_file, 'r') as f:
+            self.subgoals_data = json.load(f)
+        
+        # Store original part deltas
+        self.original_part_deltas = self.optimizer.optimizer.part_deltas.clone()
+        
+        # Create individual animators for each stage
+        self.stage_animators = {}
+        self._create_stage_animators()
+    
+    def _create_stage_animators(self):
+        """Create individual animators for each grasp-release pair."""
+        # Group subgoals by stage
+        stage_subgoals = {}
+        for subgoal in self.subgoals_data['subgoals']:
+            stage = subgoal['stage']
+            stage_subgoals[stage] = subgoal
+        
+        # Create animators for grasp-release pairs
+        for grasp_stage, obj_idx in self.target_objects:
+            # Find corresponding release stage (should be next stage)
+            release_stage = grasp_stage + 1
+            
+            if grasp_stage not in stage_subgoals:
+                print(f"Warning: No grasp subgoal found for stage {grasp_stage}")
+                continue
+                
+            if release_stage not in stage_subgoals:
+                print(f"Warning: No release subgoal found for stage {release_stage}")
+                continue
+            
+            # Get waypoints: grasp position -> release position
+            grasp_goal = stage_subgoals[grasp_stage]
+            release_goal = stage_subgoals[release_stage]
+            
+            waypoints = [
+                grasp_goal['subgoal_pose'][:3],  # Grasp position
+                release_goal['subgoal_pose'][:3]  # Release position
+            ]
+            orientations = [
+                grasp_goal['subgoal_pose'][3:7],  # Grasp orientation (wxyz format)
+                release_goal['subgoal_pose'][3:7]  # Release orientation (wxyz format)
+            ]
+            
+            print(f"Grasp-Release pair {grasp_stage}-{release_stage}: Creating animator for object {obj_idx}")
+            print(f"  Grasp position: {waypoints[0]}")
+            print(f"  Release position: {waypoints[1]}")
+            
+            # Create single-object animator for this grasp-release pair
+            animator = GaussianPointCloudAnimator(
+                optimizer=self.optimizer,
+                pointcloud_path=self.pointcloud_path,
+                object_idx=obj_idx,
+                waypoints=waypoints,
+                orientations=orientations
+            )
+            
+            # Use grasp stage as key for the animator
+            self.stage_animators[grasp_stage] = animator
+    
+    def generate_sequential_animation(self, camera, duration_per_stage: float = 5.0, fps: int = 30):
+        """Generate animation with objects moving in sequence.
+        
+        Args:
+            camera: Camera for rendering
+            duration_per_stage: Duration for each stage in seconds
+            fps: Frames per second
+            
+        Returns:
+            List of rendered frames
+        """
+        all_frames = []
+        
+        print(f"Generating sequential animation for {len(self.target_objects)} grasp-release pairs")
+        
+        # Track cumulative object positions for sequential movement
+        cumulative_positions = {}
+        
+        for stage_idx, (grasp_stage, obj_idx) in enumerate(self.target_objects):
+            print(f"\\nProcessing Grasp-Release pair {grasp_stage} (Object {obj_idx})...")
+            
+            if grasp_stage not in self.stage_animators:
+                print(f"Warning: No animator for grasp stage {grasp_stage}")
+                continue
+            
+            animator = self.stage_animators[grasp_stage]
+            
+            print(f"  Grasp position: {animator.waypoints[0]}")
+            print(f"  Release position: {animator.waypoints[1]}")
+            
+            # Start from original state 
+            current_part_deltas = self.original_part_deltas.clone()
+            
+            # Apply cumulative transformations for all previous objects at their final positions
+            for prev_obj_idx, (final_pos, final_orient) in cumulative_positions.items():
+                if prev_obj_idx != obj_idx:  # Don't apply to current object
+                    # Calculate delta for previous object's final position
+                    initial_part2world = self.optimizer.optimizer.get_initial_part2world(prev_obj_idx)
+                    initial_position = initial_part2world[:3, 3].cpu().numpy()
+                    position_delta = final_pos - initial_position
+                    
+                    # Convert orientation to rotation matrix
+                    rot_xyzw = np.array([final_orient[1], final_orient[2], final_orient[3], final_orient[0]])
+                    target_rotation = R.from_quat(rot_xyzw)
+                    relative_quat = target_rotation.as_quat()  # xyzw format
+                    
+                    # Create delta tensor for previous object
+                    prev_delta = torch.tensor([
+                        position_delta[0],
+                        position_delta[1], 
+                        position_delta[2],
+                        relative_quat[3],  # w
+                        relative_quat[0],  # x
+                        relative_quat[1],  # y
+                        relative_quat[2],  # z
+                    ], dtype=torch.float32, device=current_part_deltas.device)
+                    
+                    # Apply delta to current state
+                    current_part_deltas[prev_obj_idx] = prev_delta
+                    print(f"  Applied final position to previous object {prev_obj_idx}: {final_pos}")
+            
+            # Set the accumulated deltas (detach to avoid gradient issues)
+            self.optimizer.optimizer.part_deltas = current_part_deltas.detach()
+            
+            # Generate frames for this grasp-release pair
+            stage_frames = animator.animate(camera, duration_per_stage, fps)
+            all_frames.extend(stage_frames)
+            
+            # Store final position and orientation for this object
+            final_waypoint = animator.waypoints[-1]  # Release position
+            final_orientation = animator.orientations[-1]  # Release orientation
+            cumulative_positions[obj_idx] = (final_waypoint, final_orientation)
+            
+            print(f"Grasp-Release pair {grasp_stage} complete: {len(stage_frames)} frames")
+            print(f"Final position stored for object {obj_idx}: {final_waypoint}")
+        
+        # Reset to original state
+        self.optimizer.optimizer.part_deltas = self.original_part_deltas.clone()
+        
+        print(f"Total animation: {len(all_frames)} frames")
+        return all_frames
+    
+    def save_stage_data(self, output_dir: str):
+        """Generate and save scene data for all stages.
+        
+        Args:
+            output_dir: Directory to save stage data
+        """
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        stage_info = {
+            'total_stages': len(self.target_objects),
+            'stages': []
+        }
+        
+        all_saved_dirs = []
+        
+        # Generate scene animation data for each grasp-release pair
+        for stage_idx, (grasp_stage, obj_idx) in enumerate(self.target_objects, 1):
+            if grasp_stage not in self.stage_animators:
+                continue
+                
+            animator = self.stage_animators[grasp_stage]
+            release_stage = grasp_stage + 1
+            stage_output_dir = output_path / f"stage_{stage_idx}"
+            
+            print(f"\nGenerating scene animation data for Stage {stage_idx} (Grasp {grasp_stage}-Release {release_stage}, Object {obj_idx})...")
+            print(f"  Grasp position: {animator.waypoints[0]}")
+            print(f"  Release position: {animator.waypoints[1]}")
+            
+            # Import generate_scene_animation function
+            import sys
+            sys.path.append('/home/jiachengxu/workspace/master_thesis/POGS/scripts')
+            from sample_and_filter_poses import generate_scene_animation
+            
+            # Generate scene animation for this grasp-release pair
+            saved_dirs = generate_scene_animation(animator, f"stage_{stage_idx}_obj_{obj_idx}", str(stage_output_dir))
+            all_saved_dirs.extend(saved_dirs)
+            
+            stage_data = {
+                'stage_number': stage_idx,
+                'grasp_stage': grasp_stage,
+                'release_stage': release_stage,
+                'object_idx': obj_idx,
+                'grasp_position': animator.waypoints[0].tolist() if hasattr(animator.waypoints[0], 'tolist') else list(animator.waypoints[0]),
+                'release_position': animator.waypoints[1].tolist() if hasattr(animator.waypoints[1], 'tolist') else list(animator.waypoints[1]),
+                'grasp_orientation': list(animator.orientations[0]) if not isinstance(animator.orientations[0], list) else animator.orientations[0],
+                'release_orientation': list(animator.orientations[1]) if not isinstance(animator.orientations[1], list) else animator.orientations[1],
+                'scene_directories': [str(d) for d in saved_dirs]  # Convert Path objects to strings
+            }
+            stage_info['stages'].append(stage_data)
+        
+        # Save stage info
+        with open(output_path / 'multi_stage_info.json', 'w') as f:
+            json.dump(stage_info, f, indent=2)
+        
+        print(f"\nSaved multi-stage info to {output_path / 'multi_stage_info.json'}")
+        print(f"Total scene directories: {len(all_saved_dirs)}")
+        
+        return str(output_path)

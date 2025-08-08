@@ -76,8 +76,8 @@ def cluster_point_cloud(points: np.ndarray, eps: float = 0.02, min_samples: int 
     return clusters
 
 
-def find_target_object_by_subgoals(optimizer: Optimizer, waypoints_file: str, pointcloud_path: str = None) -> int:
-    """Find target object based on proximity to grasp stage subgoal poses.
+def find_target_objects_by_subgoals(optimizer: Optimizer, waypoints_file: str, pointcloud_path: str = None) -> List[Tuple[int, int]]:
+    """Find target objects and create grasp-release stage pairs.
     
     Args:
         optimizer: POGS optimizer instance
@@ -85,32 +85,48 @@ def find_target_object_by_subgoals(optimizer: Optimizer, waypoints_file: str, po
         pointcloud_path: Optional path to point cloud for clustering
         
     Returns:
-        Index of the target object
+        List of tuples (grasp_stage, object_idx) for each grasp-release pair in order
     """
     # Load subgoals
     with open(waypoints_file, 'r') as f:
         subgoals_data = json.load(f)
     
-    # Find grasp stage subgoals
-    grasp_poses = []
+    # Find grasp stage subgoals and build grasp-release pairs
+    grasp_release_pairs = []
     for subgoal in subgoals_data['subgoals']:
         if subgoal.get('is_grasp_stage', False):
-            pose = subgoal['subgoal_pose']
-            grasp_poses.append(np.array(pose[:3]))  # Extract position (x,y,z)
+            grasp_stage = subgoal['stage']
+            grasp_pose = np.array(subgoal['subgoal_pose'][:3])
+            
+            # Find corresponding release stage (should be next stage)
+            release_stage = None
+            release_pose = None
+            for release_subgoal in subgoals_data['subgoals']:
+                if (release_subgoal['stage'] == grasp_stage + 1 and 
+                    release_subgoal.get('is_release_stage', False)):
+                    release_stage = release_subgoal['stage']
+                    release_pose = np.array(release_subgoal['subgoal_pose'][:3])
+                    break
+            
+            if release_stage is not None:
+                grasp_release_pairs.append((grasp_stage, release_stage, grasp_pose, release_pose))
+                print(f"Grasp-Release pair: Stage {grasp_stage} (grasp) -> Stage {release_stage} (release)")
+            else:
+                print(f"Warning: No release stage found for grasp stage {grasp_stage}")
     
-    if not grasp_poses:
-        raise ValueError("No grasp stage subgoals found in waypoints file")
+    if not grasp_release_pairs:
+        raise ValueError("No grasp-release pairs found in waypoints file")
     
-    print(f"Found {len(grasp_poses)} grasp stage subgoal(s)")
+    # Sort by grasp stage number to maintain order
+    grasp_release_pairs.sort(key=lambda x: x[0])
+    print(f"Found {len(grasp_release_pairs)} grasp-release pair(s)")
     
     # Get all object masks and their Gaussian positions
     group_masks = optimizer.optimizer.group_masks
     gaussian_means = optimizer.pipeline.model.means.detach().cpu().numpy()
     
-    min_distance = float('inf')
-    target_idx = 0
-    
-    # For each object, calculate minimum distance to any grasp pose
+    # Calculate object centroids once
+    object_centroids = {}
     for obj_idx, mask in enumerate(group_masks):
         if torch.sum(mask) == 0:  # Skip empty masks
             continue
@@ -123,19 +139,55 @@ def find_target_object_by_subgoals(optimizer: Optimizer, waypoints_file: str, po
         
         # Calculate centroid of this object's Gaussians
         obj_centroid = obj_gaussians.mean(axis=0)
-        
-        # Find minimum distance to any grasp pose
-        distances = [np.linalg.norm(obj_centroid - grasp_pose) for grasp_pose in grasp_poses]
-        min_obj_distance = min(distances)
-        
-        print(f"Object {obj_idx}: centroid {obj_centroid}, min distance to grasp pose: {min_obj_distance:.6f}")
-        
-        if min_obj_distance < min_distance:
-            min_distance = min_obj_distance
-            target_idx = obj_idx
+        object_centroids[obj_idx] = obj_centroid
     
-    print(f"Target object (closest to grasp pose): index {target_idx} (distance: {min_distance:.6f})")
-    return target_idx
+    # Find closest object for each grasp stage in order
+    target_objects = []
+    used_objects = set()  # Track which objects have been assigned
+    
+    for grasp_stage, release_stage, grasp_pose, release_pose in grasp_release_pairs:
+        min_distance = float('inf')
+        target_idx = None
+        
+        # Find the closest unused object to this grasp pose
+        for obj_idx, obj_centroid in object_centroids.items():
+            if obj_idx in used_objects:  # Skip already assigned objects
+                continue
+                
+            distance = np.linalg.norm(obj_centroid - grasp_pose)
+            print(f"Grasp Stage {grasp_stage}, Object {obj_idx}: distance to grasp pose: {distance:.6f}")
+            
+            if distance < min_distance:
+                min_distance = distance
+                target_idx = obj_idx
+        
+        if target_idx is not None:
+            # Return grasp stage and object index for this pair
+            target_objects.append((grasp_stage, target_idx))
+            used_objects.add(target_idx)
+            print(f"Grasp Stage {grasp_stage}: assigned to object {target_idx} (distance: {min_distance:.6f})")
+        else:
+            print(f"Warning: No available object found for grasp stage {grasp_stage}")
+    
+    return target_objects
+
+
+def find_target_object_by_subgoals(optimizer: Optimizer, waypoints_file: str, pointcloud_path: str = None) -> int:
+    """Find target object based on proximity to grasp stage subgoal poses (legacy single-object method).
+    
+    Args:
+        optimizer: POGS optimizer instance
+        waypoints_file: Path to all_subgoals.json file
+        pointcloud_path: Optional path to point cloud for clustering
+        
+    Returns:
+        Index of the target object
+    """
+    target_objects = find_target_objects_by_subgoals(optimizer, waypoints_file, pointcloud_path)
+    if target_objects:
+        return target_objects[0][1]  # Return first object index
+    else:
+        raise ValueError("No target objects found")
 
 
 def find_target_object(optimizer: Optimizer, semantic_query: str) -> int:

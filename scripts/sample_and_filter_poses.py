@@ -22,9 +22,9 @@ from typing import Optional
 
 # Import all our modular components
 from fospre.core.utils import find_latest_config
-from fospre.core.optimizer import setup_optimizer, find_target_object_by_subgoals
+from fospre.core.optimizer import setup_optimizer, find_target_objects_by_subgoals
 from fospre.core.camera import create_camera_from_calibration
-from fospre.animation.animator import GaussianPointCloudAnimator
+from fospre.animation.animator import GaussianPointCloudAnimator, MultiStageAnimator
 from fospre.animation.waypoints import load_waypoints_from_json, create_new_subgoals_json
 from fospre.collision.detector import CollisionDetector
 from fospre.pose.generator import generate_random_poses
@@ -227,20 +227,21 @@ def main(
     print(f"Loaded {len(waypoints)} waypoints from {waypoints_file}")
     
     optimizer = setup_optimizer(config_path)
-    target_object_idx = find_target_object_by_subgoals(optimizer, waypoints_file, pointcloud_path)
+    target_objects = find_target_objects_by_subgoals(optimizer, waypoints_file, pointcloud_path)
     
-    # Create animator
-    animator = GaussianPointCloudAnimator(
+    print(f"Found {len(target_objects)} target objects for stages: {[f'Stage {s}->Object {o}' for s, o in target_objects]}")
+    
+    # Create multi-stage animator
+    multi_animator = MultiStageAnimator(
         optimizer=optimizer,
         pointcloud_path=pointcloud_path,
-        object_idx=target_object_idx,
-        waypoints=waypoints,
-        orientations=None  # Use original object's quaternion
+        target_objects=target_objects,
+        waypoints_file=waypoints_file
     )
     
     # Generate scene animation data
-    print("\nGenerating scene animation data...")
-    saved_directories = generate_scene_animation(animator, f"target_object_{target_object_idx}")
+    print("\nGenerating multi-stage scene animation data...")
+    saved_directories = multi_animator.save_stage_data("outputs/multi_stage_animation")
     
     # Create camera for rendering
     camera = None
@@ -248,13 +249,15 @@ def main(
         print(f"\nCreating camera from calibration...")
         camera = create_camera_from_calibration(calibration_file, optimizer)
     
-    # Process random poses if enabled
+    # Process random poses if enabled (currently disabled for multi-stage animation)
     pose_rankings = None
     if enable_random_poses and enable_pose_ranking:
-        pose_rankings, ranked_path = process_random_poses(
-            animator, camera, num_random_poses, max_translation, max_rotation_deg,
-            min_z, collision_threshold, max_ranked_poses
-        )
+        print("Note: Random pose processing is currently disabled for multi-stage animation")
+        # TODO: Implement random pose processing for multi-stage animation
+        # pose_rankings, ranked_path = process_random_poses(
+        #     animator, camera, num_random_poses, max_translation, max_rotation_deg,
+        #     min_z, collision_threshold, max_ranked_poses
+        # )
         
         if pose_rankings:
             # Interactive pose selection
@@ -310,21 +313,27 @@ def main(
             else:
                 print(f"\n=== KEEPING ORIGINAL WAYPOINTS ===")
     
-    # Generate original video if requested
+    # Generate multi-stage video if requested
     if generate_video:
-        print(f"\nGenerating original MP4 animation video...")
+        print(f"\nGenerating multi-stage MP4 animation video...")
         
-        # Optionally hide other objects
+        # Optionally hide non-target objects
         original_opacities = None
         if not show_all_objects:
             original_opacities = optimizer.pipeline.model.gauss_params["opacities"].clone()
             group_masks_global = optimizer.optimizer.group_masks
+            target_indices = {obj_idx for _, obj_idx in target_objects}
+            
             for idx, mask in enumerate(group_masks_global):
-                if idx != target_object_idx:
+                if idx not in target_indices:
                     optimizer.pipeline.model.gauss_params["opacities"][mask] = -10.0
         
-        # Generate animation frames
-        frames = animator.animate(camera, duration=animation_duration, fps=fps)
+        # Generate multi-stage animation frames
+        frames = multi_animator.generate_sequential_animation(
+            camera, 
+            duration_per_stage=animation_duration / len(target_objects) if len(target_objects) > 0 else animation_duration, 
+            fps=fps
+        )
         
         # Save video
         save_animation_video(frames, output_video_path, fps)
@@ -333,10 +342,10 @@ def main(
         if original_opacities is not None:
             optimizer.pipeline.model.gauss_params["opacities"] = original_opacities
         
-        print(f"Original video saved to: {output_video_path}")
+        print(f"Multi-stage video saved to: {output_video_path}")
     
     print(f"\nProcessing complete!")
-    print(f"Point cloud scene data saved to {len(saved_directories)} directories")
+    print(f"Multi-stage scene data saved to: {saved_directories}")
     if enable_random_poses and enable_pose_ranking:
         print(f"Pose generation, filtering, and ranking completed successfully")
     if generate_video:
