@@ -143,7 +143,7 @@ class ConstraintGenerator:
         output = ""
         start = time.time()
         for chunk in stream:
-            # print(f'[{time.time()-start:.2f}s] Querying OpenAI API...', end='\r')
+            print(f'[{time.time()-start:.2f}s] Querying OpenAI API...', end='\r')
             if chunk.choices[0].delta.content is not None:
                 output += chunk.choices[0].delta.content
         print(f'[{time.time()-start:.2f}s] Querying OpenAI API...Done')
