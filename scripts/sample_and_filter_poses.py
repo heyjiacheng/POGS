@@ -3,11 +3,15 @@
 Main pipeline script for combined Gaussian animation, collision filtering, and pose ranking.
 
 This script provides a complete pipeline for:
-1. Generating Gaussian splat and point cloud animations
-2. Sampling and filtering random poses for target objects
-3. Ranking poses by rotation similarity to final waypoint
-4. Interactive pose selection and new subgoals generation
-5. Creating new animations with selected poses
+1. Identifying target objects based on proximity to grasp stage subgoal poses
+2. Generating Gaussian splat and point cloud animations
+3. Sampling and filtering random poses for target objects
+4. Ranking poses by rotation similarity to final waypoint
+5. Interactive pose selection and new subgoals generation
+6. Creating new animations with selected poses
+
+The target object is now determined by finding the object closest to grasp stage 
+subgoals (where is_grasp_stage=true in all_subgoals.json), rather than using CLIP semantic queries.
 """
 
 import tyro
@@ -18,7 +22,7 @@ from typing import Optional
 
 # Import all our modular components
 from fospre.core.utils import find_latest_config
-from fospre.core.optimizer import setup_optimizer, find_target_object
+from fospre.core.optimizer import setup_optimizer, find_target_object_by_subgoals
 from fospre.core.camera import create_camera_from_calibration
 from fospre.animation.animator import GaussianPointCloudAnimator
 from fospre.animation.waypoints import load_waypoints_from_json, create_new_subgoals_json
@@ -187,7 +191,6 @@ def process_random_poses(animator: GaussianPointCloudAnimator, camera,
 def main(
     config_path: Path = None,
     pointcloud_path: str = "outputs/box/prime_seg_gaussians.ply",
-    semantic_query: str = "box cutter",
     waypoints_file: str = "outputs/all_subgoals.json",
     generate_video: bool = True,
     animation_duration: float = 5.0,
@@ -204,7 +207,11 @@ def main(
     enable_pose_ranking: bool = True,
     max_ranked_poses: Optional[int] = 20,
 ):
-    """Combined Gaussian animation, collision filtering, and pose ranking pipeline."""
+    """Combined Gaussian animation, collision filtering, and pose ranking pipeline.
+    
+    Now uses subgoal-based target object detection instead of CLIP semantic queries.
+    Target object is determined by finding the object closest to grasp stage subgoal poses.
+    """
     
     # Initialize
     wp.init()
@@ -220,7 +227,7 @@ def main(
     print(f"Loaded {len(waypoints)} waypoints from {waypoints_file}")
     
     optimizer = setup_optimizer(config_path)
-    target_object_idx = find_target_object(optimizer, semantic_query)
+    target_object_idx = find_target_object_by_subgoals(optimizer, waypoints_file, pointcloud_path)
     
     # Create animator
     animator = GaussianPointCloudAnimator(
@@ -233,7 +240,7 @@ def main(
     
     # Generate scene animation data
     print("\nGenerating scene animation data...")
-    saved_directories = generate_scene_animation(animator, semantic_query)
+    saved_directories = generate_scene_animation(animator, f"target_object_{target_object_idx}")
     
     # Create camera for rendering
     camera = None
