@@ -29,7 +29,7 @@ python src/pogs/scripts/scene_capture.py --scene box
 ```
 
 ### Train POGS
-Script used to train the POGS for 3000 steps
+Script used to train the POGS for 4000 steps
 ```
 ns-train pogs --data /home/jiachengxu/workspace/master_thesis/POGS/src/pogs/scripts/../data/utils/datasets/box
 ```
