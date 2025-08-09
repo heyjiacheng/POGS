@@ -34,7 +34,8 @@ class GaussianPointCloudAnimator:
         self.pointcloud_path = pointcloud_path
         self.object_idx = object_idx
         self.waypoints = np.array(waypoints)
-        
+        self.ds = self.optimizer.optimizer.dataset_scale
+
         # Load and filter point cloud
         self.full_pcd = self._load_and_filter_pointcloud(pointcloud_path)
         
@@ -114,10 +115,11 @@ class GaussianPointCloudAnimator:
             return self.full_pcd
         
         target_mask = group_masks[self.object_idx]
-        
+
         # Get Gaussian positions for the target object
-        gaussian_positions = self.optimizer.pipeline.model.means[target_mask].detach().cpu().numpy()
-        
+        gaussian_positions = (self.optimizer.pipeline.model.means[target_mask]
+                      .detach().cpu().numpy() / self.ds)
+
         print(f"Target object has {len(gaussian_positions)} Gaussian splats")
         
         # Find point cloud points that are close to target Gaussians
@@ -223,8 +225,8 @@ class GaussianPointCloudAnimator:
         initial_position = self.initial_part2world[:3, 3].cpu().numpy()
         
         # Calculate the delta from initial position to target position
-        position_delta = position - initial_position
-        
+        position_delta = position * self.ds - initial_position
+
         # Convert orientation to rotation matrix
         rot_xyzw = np.array([orientation[1], orientation[2], orientation[3], orientation[0]])
         target_rotation = R.from_quat(rot_xyzw)
@@ -259,8 +261,10 @@ class GaussianPointCloudAnimator:
         points = np.asarray(self.target_object_pcd.points)
         colors = np.asarray(self.target_object_pcd.colors) if len(self.target_object_pcd.colors) > 0 else None
         
-        # Center the point cloud at origin (relative to original centroid)
-        centered_points = points - self.original_pcd_centroid
+        reference_position = np.asarray(self.original_pcd_centroid)
+
+        # Center the point cloud at origin (relative to initial Gaussian position)
+        centered_points = points - reference_position
         
         # Apply rotation
         rotated_points = centered_points @ rotation_matrix.T
@@ -374,6 +378,8 @@ class MultiStageAnimator:
         self.pointcloud_path = pointcloud_path
         self.target_objects = target_objects
         self.waypoints_file = waypoints_file
+        self.ds = self.optimizer.optimizer.dataset_scale
+        print(f"Dataset scale: {self.ds}")
         
         # Load subgoals data
         with open(waypoints_file, 'r') as f:
@@ -385,6 +391,81 @@ class MultiStageAnimator:
         # Create individual animators for each stage
         self.stage_animators = {}
         self._create_stage_animators()
+    
+    def _convert_ee_to_target_waypoints(self, subgoals, target_obj_idx):
+        """Convert end effector waypoints to target object waypoints.
+        
+        Args:
+            subgoals: List of subgoal dictionaries with subgoal_pose
+            target_obj_idx: Index of target object
+            
+        Returns:
+            Tuple of (waypoints, orientations) for target object
+        """
+        # Get original target object pose from initial Gaussians (before any transformations)
+        # Use initial part2world to get the object's original position, not current position
+        initial_part2world = self.optimizer.optimizer.get_initial_part2world(target_obj_idx)
+        original_position = (initial_part2world[:3, 3] / self.ds if hasattr(initial_part2world, '__array__')
+                     else np.array(initial_part2world) / self.ds)
+
+        # Handle different types of position data
+        if hasattr(original_position, 'cpu'):
+            original_position = original_position.cpu().numpy()
+        elif not isinstance(original_position, np.ndarray):
+            original_position = np.array(original_position)
+        
+        # Get original rotation from initial part2world (assuming identity rotation at start)
+        # Since initial_part2world represents the original pose, rotation should be identity
+        original_quat = np.array([1.0, 0.0, 0.0, 0.0])  # [w, x, y, z] - identity quaternion
+        
+        print(f"Original target object pose: [{original_position[0]:.6f}, {original_position[1]:.6f}, {original_position[2]:.6f}]")
+        print(f"Original target object orient: [{original_quat[0]:.6f}, {original_quat[1]:.6f}, {original_quat[2]:.6f}, {original_quat[3]:.6f}]")
+        
+        # Get the first end effector pose (grasp pose) to calculate relative transform
+        first_subgoal = subgoals[0]['subgoal_pose']
+        first_ee_pos = np.array(first_subgoal[:3])
+        # Convert from [x, y, z, qx, qy, qz, qw] to [w, x, y, z] format
+        first_ee_orient = np.array([first_subgoal[6], first_subgoal[3], first_subgoal[4], first_subgoal[5]])
+        
+        # Import transform functions
+        from ..pose.transforms import get_ee_target_relative_transform, apply_relative_transform
+        
+        # Calculate the relative transform from first end effector to target object
+        # During grasp, ee and target should be in the same relative position
+        relative_pos, relative_orient = get_ee_target_relative_transform(
+            first_ee_pos, first_ee_orient,
+            original_position, original_quat
+        )
+        
+        print(f"Calculated relative transform from EE to target:")
+        print(f"  Relative position: [{relative_pos[0]:.6f}, {relative_pos[1]:.6f}, {relative_pos[2]:.6f}]")
+        print(f"  Relative orientation: [{relative_orient[0]:.6f}, {relative_orient[1]:.6f}, {relative_orient[2]:.6f}, {relative_orient[3]:.6f}]")
+        
+        # Apply the same relative transform to all end effector waypoints
+        target_waypoints = []
+        target_orientations = []
+        
+        for subgoal in subgoals:
+            subgoal_pose = subgoal['subgoal_pose']
+            ee_pos = np.array(subgoal_pose[:3])  # [x, y, z]
+            # Convert from [x, y, z, qx, qy, qz, qw] to [w, x, y, z] format
+            ee_orient = np.array([subgoal_pose[6], subgoal_pose[3], subgoal_pose[4], subgoal_pose[5]])
+            
+            # Apply relative transform to get target object pose
+            target_pos, target_orient = apply_relative_transform(
+                ee_pos, ee_orient,
+                relative_pos, relative_orient
+            )
+            
+            target_waypoints.append(target_pos)
+            target_orientations.append(target_orient)
+        
+        print(f"Target waypoint conversion result:")
+        print(f"  First target pose:  [{target_waypoints[0][0]:.6f}, {target_waypoints[0][1]:.6f}, {target_waypoints[0][2]:.6f}]")
+        print(f"  Final target pose:  [{target_waypoints[-1][0]:.6f}, {target_waypoints[-1][1]:.6f}, {target_waypoints[-1][2]:.6f}]")
+        
+        return target_waypoints, target_orientations
+    
     
     def _create_stage_animators(self):
         """Create individual animators for each grasp-release pair."""
@@ -411,14 +492,13 @@ class MultiStageAnimator:
             grasp_goal = stage_subgoals[grasp_stage]
             release_goal = stage_subgoals[release_stage]
             
-            waypoints = [
-                grasp_goal['subgoal_pose'][:3],  # Grasp position
-                release_goal['subgoal_pose'][:3]  # Release position
-            ]
-            orientations = [
-                grasp_goal['subgoal_pose'][3:7],  # Grasp orientation (wxyz format)
-                release_goal['subgoal_pose'][3:7]  # Release orientation (wxyz format)
-            ]
+            # Convert ee waypoints to target object waypoints
+            target_waypoints, target_orientations = self._convert_ee_to_target_waypoints(
+                [grasp_goal, release_goal], obj_idx
+            )
+            
+            waypoints = target_waypoints
+            orientations = target_orientations
             
             print(f"Grasp-Release pair {grasp_stage}-{release_stage}: Creating animator for object {obj_idx}")
             print(f"  Grasp position: {waypoints[0]}")
@@ -475,7 +555,7 @@ class MultiStageAnimator:
                     # Calculate delta for previous object's final position
                     initial_part2world = self.optimizer.optimizer.get_initial_part2world(prev_obj_idx)
                     initial_position = initial_part2world[:3, 3].cpu().numpy()
-                    position_delta = final_pos - initial_position
+                    position_delta = final_pos * self.ds - initial_position
                     
                     # Convert orientation to rotation matrix
                     rot_xyzw = np.array([final_orient[1], final_orient[2], final_orient[3], final_orient[0]])

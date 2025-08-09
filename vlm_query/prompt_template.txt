@@ -52,7 +52,7 @@ Suppose you are controlling a robot to perform manipulation tasks by writing con
 - For any stage, you should only write one sub-goal constraint that associates the end-effector with a keypoint. No path constraints are needed.
 - In order to move a keypoint, its associated object must be grasped in one of the previous stages.
 - The robot can only grasp one object at a time.
-- The center of an object is stable for robot to grasp.
+- The center of an object is stable for robot to grasp, always choose the keypoint in the middle of an object.
 - Grasping must be an independent stage from other stages.
 - You may use two keypoints to form a vector, which can be used to specify a rotation (by specifying the angle between the vector and a fixed axis).
 - You may use multiple keypoints to specify a surface or volume.

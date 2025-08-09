@@ -58,3 +58,4 @@ pogs/scripts/results
 *.egg-info
 
 .claude/
+vlm_query/
