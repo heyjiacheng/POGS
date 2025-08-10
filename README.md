@@ -47,7 +47,7 @@ Once you have trained the POGS, make sure you have the config file and checkpoin
 
 ### View Gsplat
 ```
-ns-viewer --load-config /home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-08-05_184657/config.yml
+ns-viewer --load-config /home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-08-10_141535/config.yml
 ```
 
 ### Output filtered end pose

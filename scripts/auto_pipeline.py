@@ -280,7 +280,7 @@ class AutoPipeline:
     
     def _get_task_instruction(self):
         """Get task instruction from user input"""
-        default_instruction = "Put the box cutter, marker pen and pliers into the box."
+        default_instruction = "Put the box cutter into the box."
         
         print(f"\n=== Task Instruction Input ===")
         print(f"Default instruction: '{default_instruction}'")

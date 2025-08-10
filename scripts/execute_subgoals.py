@@ -29,7 +29,7 @@ class SubgoalExecutor:
         
         # 创建旋转矩阵并应用offset
         rotation_matrix = R.from_quat(quat).as_matrix()
-        z_offset = np.array([0, 0, 0.165])  # 16.5cm沿z轴offset
+        z_offset = np.array([0, 0, 0.168])  # 16.8cm沿z轴offset
         z_offset_world = rotation_matrix @ z_offset
         
         # 应用offset

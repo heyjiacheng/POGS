@@ -8,8 +8,8 @@ main:
   constraint_tolerance: 0.10  # for backtracking
   # bounds_min: &bounds_min [-0.3, -0.4, 0.5] # how to encode the workspace?
   # bounds_max: &bounds_max [0.30, 0.4, 0.6]
-  bounds_min: &bounds_min [-1.0, -1.0, -1.0] # how to encode the workspace?
-  bounds_max: &bounds_max [1.0, 1.0, 1.0]
+  bounds_min: &bounds_min [-1.0, -1.0, 0.0] # how to encode the workspace?
+  bounds_max: &bounds_max [1.0, 1.0, 0.7]
   sdf_voxel_size: 0.01
   vlm_camera: 0
   action_steps_per_iter: 5
