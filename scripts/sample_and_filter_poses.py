@@ -314,26 +314,36 @@ def main(
     if generate_video:
         print(f"\nGenerating original MP4 animation video...")
         
-        # Optionally hide other objects
-        original_opacities = None
-        if not show_all_objects:
-            original_opacities = optimizer.pipeline.model.gauss_params["opacities"].clone()
-            group_masks_global = optimizer.optimizer.group_masks
-            for idx, mask in enumerate(group_masks_global):
-                if idx != target_object_idx:
-                    optimizer.pipeline.model.gauss_params["opacities"][mask] = -10.0
+        # Get original target object pose for calculations
+        original_target_pose = animator.original_position
+        if hasattr(animator.original_position, 'cpu'):
+            original_target_pose = animator.original_position.cpu().numpy()
         
-        # Generate animation frames
-        frames = animator.animate(camera, duration=animation_duration, fps=fps)
+        original_target_rotation = animator.original_rotation
+        if hasattr(original_target_rotation, 'wxyz'):
+            original_target_quat = original_target_rotation.wxyz
+            if hasattr(original_target_quat, 'cpu'):
+                original_target_quat = original_target_quat.cpu().numpy()
+        else:
+            # Fallback to identity quaternion
+            original_target_quat = np.array([1.0, 0.0, 0.0, 0.0])  # [w, x, y, z]
         
-        # Save video
-        save_animation_video(frames, output_video_path, fps)
+        # Generate original animation using generate_new_animation
+        original_video_path = generate_new_animation(
+            existing_optimizer=optimizer,
+            existing_camera=camera,
+            pointcloud_path=pointcloud_path,
+            target_object_idx=target_object_idx,
+            new_waypoints_file=waypoints_file,  # Use original waypoints file
+            original_target_pose=original_target_pose,
+            original_target_orient=original_target_quat,
+            output_video_path=output_video_path,
+            animation_duration=animation_duration,
+            fps=fps,
+            show_all_objects=show_all_objects
+        )
         
-        # Restore original opacities
-        if original_opacities is not None:
-            optimizer.pipeline.model.gauss_params["opacities"] = original_opacities
-        
-        print(f"Original video saved to: {output_video_path}")
+        print(f"Original video saved to: {original_video_path}")
     
     print(f"\nProcessing complete!")
     print(f"Point cloud scene data saved to {len(saved_directories)} directories")
