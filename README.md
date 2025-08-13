@@ -47,7 +47,7 @@ Once you have trained the POGS, make sure you have the config file and checkpoin
 
 ### View Gsplat
 ```
-ns-viewer --load-config /home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-08-10_141535/config.yml
+ns-viewer --load-config /home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-08-10_141535/config.yml --viewer.websocket-port 8007
 ```
 
 ### Output filtered end pose
@@ -58,6 +58,11 @@ python scripts/sample_and_filter_poses.py
 ### Run Bi-RRT to get path
 ```
 python scripts/BiRRT_Cons.py
+```
+
+### Visualize animation that equal to action
+```
+python scripts/generate_action_animation.py
 ```
 
 ### Execute on UR5
