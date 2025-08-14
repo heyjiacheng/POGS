@@ -79,8 +79,10 @@ class CollisionDetector:
         collision_points = np.sum(sdf_values < self.collision_threshold)
         collision_ratio = collision_points / len(moving_points)
         
-        # Detect collision
-        collision_detected = min_distance < self.collision_threshold
+        # Detect collision with tolerance for noise
+        # Allow some collision points if they represent a small fraction (likely noise)
+        collision_detected = (min_distance < self.collision_threshold and 
+                            collision_ratio > 0.05)  # Allow up to 5% collision points
         
         collision_info = {
             "min_distance": float(min_distance),

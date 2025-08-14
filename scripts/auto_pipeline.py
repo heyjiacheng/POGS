@@ -515,7 +515,7 @@ class AutoPipeline:
 
     def _load_camera_extrinsics(self):
         """Load camera extrinsics from wrist_to_d435.tf"""
-        extrinsics_path = 'cam_env/easy_handeye/wrist_to_d435.tf'
+        extrinsics_path = 'src/pogs/calibration_outputs/wrist_to_d435.tf'
         with open(extrinsics_path, 'r') as f:
             lines = [line.strip() for line in f if line.strip()]
         

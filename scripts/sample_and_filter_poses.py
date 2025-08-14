@@ -28,7 +28,7 @@ from fospre.animation.animator import GaussianPointCloudAnimator
 from fospre.animation.waypoints import load_waypoints_from_json, create_new_subgoals_json
 from fospre.collision.detector import CollisionDetector
 from fospre.pose.generator import generate_random_poses
-from fospre.pose.ranking import rank_poses_by_rotation, interactive_pose_selection
+from fospre.pose.ranking import rank_poses_by_rotation, rank_poses_by_rotation_and_translation, interactive_pose_selection
 from fospre.io.scene_io import save_scene_at_waypoint, save_ranked_poses
 from fospre.io.video_io import save_animation_video, generate_new_animation
 
@@ -173,7 +173,11 @@ def process_random_poses(animator: GaussianPointCloudAnimator, camera,
     
     # Pose ranking
     print(f"\n=== POSE RANKING ===")
-    pose_rankings = rank_poses_by_rotation(valid_pose_data, base_orientation)
+    # Use combined rotation and translation ranking
+    pose_rankings = rank_poses_by_rotation_and_translation(
+        valid_pose_data, base_orientation, base_position, 
+        rotation_weight=0.6, translation_weight=0.4
+    )
     
     # Save top ranked poses
     num_to_save = min(max_ranked_poses or len(pose_rankings), len(pose_rankings))
@@ -200,10 +204,10 @@ def main(
     calibration_file: str = "/home/jiachengxu/workspace/master_thesis/POGS/src/pogs/calibration_outputs/world_to_d405.tf",
     enable_random_poses: bool = True,
     num_random_poses: int = 1000,
-    max_translation: float = 0.1,
+    max_translation: float = 0.08,
     max_rotation_deg: float = 90.0,
     min_z: float = 0.001,
-    collision_threshold: float = 0.001,
+    collision_threshold: float = 0.003,
     enable_pose_ranking: bool = True,
     max_ranked_poses: Optional[int] = 20,
 ):
@@ -264,7 +268,15 @@ def main(
             if selected_pose_idx is not None:
                 # User selected a pose to replace final waypoint
                 selected_pose_data = pose_rankings[selected_pose_idx - 1][0]  # Get pose_data
-                selected_pose_data['rotation_difference_deg'] = pose_rankings[selected_pose_idx - 1][1]  # Add rotation diff
+                # Handle both combined scoring (4 elements) and rotation-only (2 elements)
+                if len(pose_rankings[selected_pose_idx - 1]) == 4:
+                    # Combined scoring: (pose_data, combined_score, rotation_diff, translation_distance)
+                    selected_pose_data['rotation_difference_deg'] = pose_rankings[selected_pose_idx - 1][2]
+                    selected_pose_data['translation_distance_m'] = pose_rankings[selected_pose_idx - 1][3]
+                    selected_pose_data['combined_score'] = pose_rankings[selected_pose_idx - 1][1]
+                else:
+                    # Rotation-only: (pose_data, rotation_diff)
+                    selected_pose_data['rotation_difference_deg'] = pose_rankings[selected_pose_idx - 1][1]
                 
                 # Get original target object pose for calculations
                 original_target_pose = animator.original_position

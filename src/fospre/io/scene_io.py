@@ -90,7 +90,12 @@ def save_ranked_poses(pose_rankings: List, camera, animator, output_base_dir: st
     
     print(f"\nSaving top {num_to_save} ranked poses to {ranked_output}...")
     
-    for pose_idx, (pose_data, rot_diff) in enumerate(pose_rankings[:num_to_save]):
+    for pose_idx, ranking_tuple in enumerate(pose_rankings[:num_to_save]):
+        # Handle both combined scoring (4 elements) and rotation-only (2 elements)
+        if len(ranking_tuple) == 4:
+            pose_data, combined_score, rot_diff, trans_dist = ranking_tuple
+        else:
+            pose_data, rot_diff = ranking_tuple
         # Create new pose directory name with ranking
         new_pose_name = f"ranked_pose_{pose_idx+1:03d}"
         dest_dir = ranked_path / new_pose_name
