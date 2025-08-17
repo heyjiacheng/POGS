@@ -13,7 +13,7 @@ pixi shell
 ### Calibrate wrist mounted and third person cameras
 Before training/tracking POGS, make sure wrist mounted camera and third-person view camera are calibrated. We use an Aruco marker for the calibration
 ```
-cd ~/POGS/pogs/scripts
+cd src/pogs/scripts
 python calibrate_cameras.py
 ```
 ### Rekep
@@ -47,7 +47,7 @@ Once you have trained the POGS, make sure you have the config file and checkpoin
 
 ### View Gsplat
 ```
-ns-viewer --load-config /home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-08-10_141535/config.yml --viewer.websocket-port 8007
+ns-viewer --load-config /home/jiachengxu/workspace/master_thesis/POGS/outputs/box/pogs/2025-08-14_144030/config.yml --viewer.websocket-port 8007
 ```
 
 ### Output filtered end pose

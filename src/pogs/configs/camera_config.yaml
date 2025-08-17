@@ -3,7 +3,7 @@ static_d405:
   flip_mode: false
   fps: 30
   gain: 31
-  id: "130322272869"
+  id: "218622277783"
   resolution: 1080p
 wrist_d435:
   exposure: 67
