@@ -207,7 +207,7 @@ def main(
     max_translation: float = 0.08,
     max_rotation_deg: float = 90.0,
     min_z: float = 0.001,
-    collision_threshold: float = 0.003,
+    collision_threshold: float = 0.005,
     enable_pose_ranking: bool = True,
     max_ranked_poses: Optional[int] = 20,
 ):

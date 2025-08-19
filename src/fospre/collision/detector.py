@@ -82,8 +82,8 @@ class CollisionDetector:
         # Detect collision with tolerance for noise
         # Allow some collision points if they represent a small fraction (likely noise)
         collision_detected = (min_distance < self.collision_threshold and 
-                            collision_ratio > 0.05)  # Allow up to 5% collision points
-        
+                            collision_ratio > 0.02)  # Allow up to 2% collision points
+
         collision_info = {
             "min_distance": float(min_distance),
             "collision_points": int(collision_points),

@@ -13,7 +13,6 @@ import json
 from tqdm import tqdm
 import pyrealsense2 as rs
 from sklearn.cluster import DBSCAN
-from scipy.spatial import cKDTree
 
 # ===============================
 # Setup paths and transformation
@@ -491,78 +490,6 @@ def main(scene_name="realsense_scene"):
         print("Warning: No valid point cloud data captured")
         pc_all = np.empty((0, 3))
         rgb_all = np.empty((0, 3))
-    
-    # Filter out interior noise points using surface normal filtering
-    if len(pc_all) > 100:
-        pcd_temp = o3d.geometry.PointCloud()
-        pcd_temp.points = o3d.utility.Vector3dVector(pc_all)
-        
-        # Ensure colors are in [0,1] range for Open3D
-        if rgb_all.max() > 1.0:
-            pcd_temp.colors = o3d.utility.Vector3dVector(rgb_all / 255.0)
-            rgb_normalized = True
-        else:
-            pcd_temp.colors = o3d.utility.Vector3dVector(rgb_all)
-            rgb_normalized = False
-        
-        # Estimate normals for surface detection with viewpoint
-        pcd_temp.estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.01, max_nn=30)
-        )
-        # Orient normals consistently (pointing outward from centroid)
-        centroid = pcd_temp.get_center()
-        pcd_temp.orient_normals_consistent_tangent_plane(k=30)
-        
-        normals = np.asarray(pcd_temp.normals)
-        points = np.asarray(pcd_temp.points)
-        colors = np.asarray(pcd_temp.colors)
-        
-        # Build KDTree for neighborhood search
-        tree = cKDTree(points)
-        
-        # Conservative filtering - only remove obvious interior noise
-        valid_indices = []
-        for i, point in enumerate(points):
-            keep_point = True
-            
-            # Find neighbors within small radius for local analysis
-            neighbors = tree.query_ball_point(point, r=0.005)  # 5mm radius
-            if len(neighbors) > 8:  # Need sufficient neighbors for reliable analysis
-                neighbor_points = points[neighbors]
-                neighbor_normals = normals[neighbors]
-                
-                # Only filter points with extremely inconsistent normals (likely sensor noise)
-                # Calculate pairwise dot products between normals
-                dot_products = []
-                for j in range(len(neighbor_normals)):
-                    for k in range(j+1, len(neighbor_normals)):
-                        dot_products.append(np.dot(neighbor_normals[j], neighbor_normals[k]))
-                
-                if len(dot_products) > 0:
-                    mean_alignment = np.mean(dot_products)
-                    # Only remove points with extremely random normals (< 0.2 means very inconsistent)
-                    if mean_alignment < 0.2:
-                        # Additional check: is this point isolated from any surface?
-                        distances_to_neighbors = np.linalg.norm(neighbor_points - point, axis=1)
-                        avg_distance = np.mean(distances_to_neighbors[1:])  # Exclude self
-                        if avg_distance > 0.003:  # 3mm - likely isolated noise
-                            keep_point = False
-            
-            if keep_point:
-                valid_indices.append(i)
-        
-        print(f"✓ Surface filtering: {len(valid_indices)}/{len(points)} points kept ({len(points)-len(valid_indices)} interior noise removed)")
-        
-        # Apply filtering and restore original color range
-        if len(valid_indices) > 0:
-            pc_all = points[valid_indices]
-            filtered_colors = colors[valid_indices]
-            if rgb_normalized:
-                rgb_all = filtered_colors * 255.0
-            else:
-                rgb_all = filtered_colors
-        else:
-            print("Warning: Surface filtering removed all points, keeping original")
     
     # Save point cloud
     pcd = o3d.geometry.PointCloud()

@@ -37,8 +37,8 @@ def generate_random_poses(base_position: np.ndarray, base_orientation: np.ndarra
     base_rotation = R.from_quat(base_rot_xyzw)
     
     # Set random seed for reproducibility
-    np.random.seed(45)
-    random.seed(45)
+    np.random.seed(42)
+    random.seed(42)
 
     for i in range(num_poses):
         # Generate random translation
