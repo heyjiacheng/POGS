@@ -5,7 +5,7 @@ Camera calibration and creation utilities.
 import torch
 import numpy as np
 import trimesh
-from typing import Tuple
+from typing import Tuple, List
 
 from nerfstudio.cameras.cameras import Cameras
 from pogs.tracking.optim import Optimizer
@@ -81,3 +81,69 @@ def create_camera_from_calibration(calibration_file: str, optimizer: Optimizer) 
     print(f"Final camera position: {camera.camera_to_worlds[0, :3, 3]}")
     
     return camera
+
+
+def create_circular_cameras(center_point: np.ndarray, ref_camera_pos: np.ndarray, 
+                           num_views: int, radius: float, optimizer: Optimizer, 
+                           calibration_file: str) -> List[Cameras]:
+    """Create cameras positioned in a circle around the center point using successful look-at logic.
+    
+    Args:
+        center_point: Point to look at [x, y, z]
+        ref_camera_pos: Reference camera position from calibration
+        num_views: Number of camera views to generate
+        radius: Radius of the circle around center point
+        optimizer: POGS optimizer for scaling
+        calibration_file: Path to calibration file for creating reference cameras
+        
+    Returns:
+        List of Camera objects
+    """
+    cameras = []
+    
+    # Calculate distance from reference camera to center point
+    ref_distance = np.linalg.norm(ref_camera_pos - center_point)
+    actual_radius = max(radius, ref_distance)
+    camera_height = ref_camera_pos[2]  # Use same height as reference
+    
+    # Generate angles for circular positioning
+    angles = np.linspace(0, 2 * np.pi, num_views, endpoint=False)
+    
+    for angle in angles:
+        # Calculate camera position on circle
+        cam_x = center_point[0] + actual_radius * np.cos(angle)
+        cam_y = center_point[1] + actual_radius * np.sin(angle)
+        cam_z = camera_height
+        camera_pos = np.array([cam_x, cam_y, cam_z])
+        
+        # Create look-at direction
+        look_dir = center_point - camera_pos
+        look_dir = look_dir / np.linalg.norm(look_dir)
+        
+        # Create coordinate system
+        up_world = np.array([0, 0, 1])
+        right = np.cross(look_dir, up_world)
+        if np.linalg.norm(right) > 1e-6:
+            right = right / np.linalg.norm(right)
+        else:
+            right = np.array([1, 0, 0])
+        up = np.cross(right, look_dir)
+        up = up / np.linalg.norm(up)
+        
+        # Build camera-to-world matrix
+        cam2world = np.eye(4)
+        cam2world[:3, 0] = right
+        cam2world[:3, 1] = up
+        cam2world[:3, 2] = -look_dir  # negative for right-handed
+        cam2world[:3, 3] = camera_pos
+        
+        # Create camera by copying calibration camera approach
+        camera = create_camera_from_calibration(calibration_file, optimizer)
+        
+        # Update the camera-to-world transform
+        camera.camera_to_worlds[0] = torch.from_numpy(cam2world[:3, :]).float()
+        camera.camera_to_worlds[:, :3, 3] *= optimizer.dataset_scale
+        
+        cameras.append(camera)
+    
+    return cameras

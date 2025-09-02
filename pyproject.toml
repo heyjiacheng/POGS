@@ -18,7 +18,7 @@ dependencies=[
     "typeguard>=4.0.0",
     "awscli",
     "pyrealsense2"
-]
+, "pycocotools>=2.0.10,<3"]
 
 [tool.setuptools]
 include-package-data = true

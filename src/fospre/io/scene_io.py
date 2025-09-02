@@ -110,6 +110,21 @@ def save_ranked_poses(pose_rankings: List, camera, animator, output_base_dir: st
         gaussian_pil = Image.fromarray(gaussian_image)
         gaussian_pil.save(gaussian_path)
         
+        # Save pose metadata as JSON
+        pose_metadata = {
+            'position': pose_data['position'].tolist(),
+            'orientation': pose_data['orientation'].tolist(),
+            'index': pose_data['index'],
+            'rotation_difference_deg': rot_diff
+        }
+        if len(ranking_tuple) == 4:
+            pose_metadata['combined_score'] = combined_score
+            pose_metadata['translation_distance'] = trans_dist
+        
+        metadata_path = dest_dir / "pose_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(pose_metadata, f, indent=2)
+        
         # Save point cloud files
         target_pcd_path = dest_dir / "moving_object.ply"
         static_pcd_path = dest_dir / "static_objects.ply"

@@ -29,8 +29,11 @@ from fospre.animation.waypoints import load_waypoints_from_json, create_new_subg
 from fospre.collision.detector import CollisionDetector
 from fospre.pose.generator import generate_random_poses
 from fospre.pose.ranking import rank_poses_by_rotation, rank_poses_by_rotation_and_translation, interactive_pose_selection
+from fospre.pose.transforms import move_down_until_collision
 from fospre.io.scene_io import save_scene_at_waypoint, save_ranked_poses
 from fospre.io.video_io import save_animation_video, generate_new_animation
+from fospre.io.multiview import generate_multiview_renders
+
 
 
 def generate_scene_animation(animator: GaussianPointCloudAnimator, target_object_name: str, 
@@ -143,12 +146,25 @@ def process_random_poses(animator: GaussianPointCloudAnimator, camera,
         )
         
         if not collision_detected:
-            # Store valid pose data
+            # Move target object down until it reaches collision threshold
+            # This ensures the object is grounded and not floating
+            grounded_position, collision_found = move_down_until_collision(
+                pos, orient, animator, collision_detector
+            )
+            
+            # Generate final transformed point cloud at grounded position
+            final_transformed_pcd = animator.generate_transformed_target_pointcloud(
+                grounded_position, orient
+            )
+            
+            # Store valid pose data with grounded position
             pose_data = {
-                'position': pos,
+                'position': grounded_position,  # Use grounded position
                 'orientation': orient,
                 'index': pose_idx,
-                'transformed_pcd': transformed_target_pcd
+                'transformed_pcd': final_transformed_pcd,
+                'original_position': pos,  # Keep original for reference
+                'grounded': collision_found  # Track whether grounding was successful
             }
             valid_pose_data.append(pose_data)
         else:
@@ -176,7 +192,7 @@ def process_random_poses(animator: GaussianPointCloudAnimator, camera,
     # Use combined rotation and translation ranking
     pose_rankings = rank_poses_by_rotation_and_translation(
         valid_pose_data, base_orientation, base_position, 
-        rotation_weight=0.6, translation_weight=0.4
+        rotation_weight=0.3, translation_weight=0.7
     )
     
     # Save top ranked poses
@@ -210,11 +226,18 @@ def main(
     collision_threshold: float = 0.005,
     enable_pose_ranking: bool = True,
     max_ranked_poses: Optional[int] = 20,
+    enable_multiview_renders: bool = True,
+    multiview_center_point: tuple = (-0.346, -0.08, 0.02),
+    multiview_num_views: int = 50,
+    multiview_radius: float = 0.5,
 ):
-    """Combined Gaussian animation, collision filtering, and pose ranking pipeline.
+    """Combined Gaussian animation, collision filtering, pose ranking, and multiview rendering pipeline.
     
     Now uses subgoal-based target object detection instead of CLIP semantic queries.
     Target object is determined by finding the object closest to grasp stage subgoal poses.
+    
+    After generating and ranking poses, automatically generates multiview renders 
+    (50 different camera angles) around each ranked pose position.
     """
     
     # Initialize
@@ -259,6 +282,19 @@ def main(
             animator, camera, num_random_poses, max_translation, max_rotation_deg,
             min_z, collision_threshold, max_ranked_poses
         )
+        
+        # Generate multiview renders for all ranked poses if enabled
+        if pose_rankings and enable_multiview_renders:
+            generate_multiview_renders(
+                ranked_poses_dir=ranked_path,
+                animator=animator,
+                optimizer=optimizer,
+                calibration_file=calibration_file,
+                center_point=multiview_center_point,
+                num_views=multiview_num_views,
+                radius=multiview_radius,
+                output_base_dir="outputs"
+            )
         
         if pose_rankings:
             # Interactive pose selection

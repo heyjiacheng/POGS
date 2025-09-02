@@ -382,7 +382,7 @@ def setup_visualization(start_xyz, goal_xyz, robot_size, obstacles):
 
 def plan_path(start_xyz, goal_xyz, robot_size, obstacles, ax=None):
     """执行路径规划"""
-    bounds = [(-0.5, 0.5), (-0.5, 0.5), (0, 0.5)]
+    bounds = [(-0.7, -0.1), (-0.5, 0.5), (0, 0.5)]
     
     print("开始BiRRT*路径规划...")
     planner = BiRRTStarRigid(
@@ -463,7 +463,7 @@ def generate_output_json(path, subgoals, robot_size):
 
 def visualize_final_path(ax, path, start_xyz, goal_xyz, robot_size, obstacles, show_exploration=True):
     """可视化最终路径，可选择是否显示探索过程"""
-    bounds = [(-0.5, 0.5), (-0.5, 0.5), (0, 0.5)]
+    bounds = [(-0.7, -0.1), (-0.5, 0.5), (0, 0.5)]
     
     if not show_exploration:
         # 如果不显示探索过程，清除之前的内容

@@ -62,3 +62,51 @@ def apply_relative_transform(ee_pose: np.ndarray, ee_orient: np.ndarray,
     target_orientation = np.array([target_quat[3], target_quat[0], target_quat[1], target_quat[2]])  # [w, x, y, z]
     
     return target_position, target_orientation
+
+
+def move_down_until_collision(position: np.ndarray, orientation: np.ndarray, 
+                             animator, collision_detector, step_size: float = 0.001,
+                             max_steps: int = 200) -> Tuple[np.ndarray, bool]:
+    """Move target object down along z-axis until collision threshold is exceeded.
+    
+    This function ensures the target object is not floating in air by moving it
+    down until it makes sufficient contact with static objects.
+    
+    Args:
+        position: Initial position [x, y, z]
+        orientation: Object orientation [w, x, y, z]
+        animator: GaussianPointCloudAnimator instance
+        collision_detector: CollisionDetector instance
+        step_size: Distance to move down per step (meters)
+        max_steps: Maximum number of steps to prevent infinite loops
+        
+    Returns:
+        Tuple of (final_position, collision_found)
+    """
+    current_position = position.copy()
+    
+    for step in range(max_steps):
+        # Generate transformed point cloud at current position
+        transformed_target_pcd = animator.generate_transformed_target_pointcloud(
+            current_position, orientation
+        )
+        
+        # Check collision
+        collision_detected, collision_points, collision_ratio = collision_detector.detect_collision_sdf(
+            transformed_target_pcd, animator.static_objects_pcd
+        )
+        
+        if collision_detected:
+            # Found sufficient collision - target object is grounded
+            return current_position, True
+        
+        # Move down by step_size
+        current_position[2] -= step_size
+        
+        # Safety check - don't go below a reasonable floor level
+        if current_position[2] < -0.1:
+            break
+    
+    # If we reach here, no sufficient collision was found
+    # Return the lowest position tested
+    return current_position, False
