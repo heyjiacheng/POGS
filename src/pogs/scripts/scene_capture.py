@@ -44,39 +44,111 @@ except FileNotFoundError as e:
 # ===============================
 
 class RealSenseCamera:
-    def __init__(self, serial_number, width=640, height=480, fps=30, camera_name="realsense"):
-        self.pipeline = rs.pipeline()
-        self.config = rs.config()
-        self.config.enable_device(serial_number)
-        self.config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-        self.config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
+    def __init__(self, serial_number, width=640, height=480, fps=15, camera_name="realsense"):  # Reduced FPS from 30 to 15
+        self.serial_number = serial_number
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.camera_name = camera_name
+        self.pipeline = None
+        self.config = None
+        self.align = None
+        self.intr = None
+        self.intrinsics = None
+        
+        # Initialize camera connection
+        self._initialize_camera()
 
-        # Start pipeline and get camera info
-        profile = self.pipeline.start(self.config)
-        self.align = rs.align(rs.stream.color)
-        
-        # Get intrinsics
-        color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
-        self.intr = color_stream.get_intrinsics()
-        self.intrinsics = CameraIntrinsics(camera_name, self.intr.width, self.intr.height,
-                                           self.intr.fx, self.intr.fy, self.intr.ppx, self.intr.ppy)
-        
-        # Warm up camera
-        for _ in range(10):
-            self.pipeline.wait_for_frames()
+    def _initialize_camera(self):
+        """Initialize camera connection"""
+        try:
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            self.config.enable_device(self.serial_number)
+            self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
+            self.config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
 
-    def get_rgb_depth(self):
-        frames = self.pipeline.wait_for_frames()
-        aligned_frames = self.align.process(frames)
-        color = aligned_frames.get_color_frame()
-        depth = aligned_frames.get_depth_frame()
+            # Start pipeline and get camera info
+            profile = self.pipeline.start(self.config)
+            self.align = rs.align(rs.stream.color)
+            
+            # Get intrinsics
+            color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            self.intr = color_stream.get_intrinsics()
+            self.intrinsics = CameraIntrinsics(self.camera_name, self.intr.width, self.intr.height,
+                                               self.intr.fx, self.intr.fy, self.intr.ppx, self.intr.ppy)
+            
+            # Warm up camera
+            for _ in range(10):
+                self.pipeline.wait_for_frames()
+                
+            print(f"✓ Camera {self.serial_number} initialized successfully")
+            
+        except Exception as e:
+            print(f"✗ Error initializing camera {self.serial_number}: {e}")
+            raise
+
+    def _reconnect_camera(self, max_retries=3):
+        """Attempt to reconnect the camera"""
+        print(f"⚠ Camera {self.serial_number} disconnected, attempting to reconnect...")
         
-        color_image = np.asanyarray(color.get_data())
-        depth_image = np.asanyarray(depth.get_data()) / 1000.0  # Convert to meters
-        
-        # Convert BGR to RGB for consistency
-        color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
-        return color_image, depth_image
+        for attempt in range(max_retries):
+            try:
+                # Stop current pipeline if it exists
+                if self.pipeline:
+                    try:
+                        self.pipeline.stop()
+                    except:
+                        pass
+                
+                # Wait before reconnecting
+                time.sleep(2)
+                
+                # Reinitialize camera
+                self._initialize_camera()
+                return True
+                
+            except Exception as e:
+                print(f"✗ Reconnection attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                    
+        print(f"✗ Failed to reconnect camera {self.serial_number} after {max_retries} attempts")
+        return False
+
+    def get_rgb_depth(self, max_retries=3):
+        """Get RGB and depth images with automatic reconnection on failure"""
+        for attempt in range(max_retries):
+            try:
+                frames = self.pipeline.wait_for_frames(timeout_ms=5000)  # 5 second timeout
+                aligned_frames = self.align.process(frames)
+                color = aligned_frames.get_color_frame()
+                depth = aligned_frames.get_depth_frame()
+                
+                if not color or not depth:
+                    raise RuntimeError("Failed to get valid color or depth frame")
+                
+                color_image = np.asanyarray(color.get_data())
+                depth_image = np.asanyarray(depth.get_data()) / 1000.0  # Convert to meters
+                
+                # Convert BGR to RGB for consistency
+                color_image = cv2.cvtColor(color_image, cv2.COLOR_BGR2RGB)
+                return color_image, depth_image
+                
+            except (RuntimeError, Exception) as e:
+                print(f"⚠ Error getting frames from camera {self.serial_number} (attempt {attempt + 1}/{max_retries}): {e}")
+                
+                if attempt < max_retries - 1:
+                    # Try to reconnect the camera
+                    if self._reconnect_camera():
+                        print(f"✓ Camera {self.serial_number} reconnected, retrying capture...")
+                        continue
+                    else:
+                        print(f"✗ Failed to reconnect camera {self.serial_number}")
+                        break
+                else:
+                    print(f"✗ Failed to capture from camera {self.serial_number} after {max_retries} attempts")
+                    raise
 
     def get_ns_intrinsics(self):
         """Return intrinsics in NeRFStudio format"""
@@ -96,7 +168,13 @@ class RealSenseCamera:
         }
 
     def stop(self):
-        self.pipeline.stop()
+        """Safely stop the camera pipeline"""
+        try:
+            if self.pipeline:
+                self.pipeline.stop()
+                print(f"✓ Camera {self.serial_number} stopped successfully")
+        except Exception as e:
+            print(f"⚠ Warning stopping camera {self.serial_number}: {e}")
 
 # ===============================
 # Point Cloud Generation
@@ -274,11 +352,11 @@ def main(scene_name="realsense_scene"):
     try:
         wrist_cam = RealSenseCamera(
             serial_number=camera_config['wrist_d435']['id'],
-            width=640, height=480, fps=30, camera_name="d435"
+            width=640, height=480, fps=15, camera_name="d435"  # Reduced FPS
         )
         third_cam = RealSenseCamera(
             serial_number=camera_config['static_d405']['id'],
-            width=640, height=480, fps=30, camera_name="d405"
+            width=640, height=480, fps=15, camera_name="d405"  # Reduced FPS
         )
         print("✓ Cameras initialized successfully")
     except Exception as e:
@@ -362,7 +440,7 @@ def main(scene_name="realsense_scene"):
     for i, joint in enumerate(tqdm(trajectory, desc="Capturing frames")):
         # Move robot to trajectory point
         robot.move_joint(joint, vel=0.7, acc=0.15)
-        time.sleep(1.0)  # Wait for stabilization
+        time.sleep(1.5)  # Increased wait time for better stabilization and camera cooling
         
         # Get current robot pose
         wrist_pose = robot.get_pose()
@@ -372,8 +450,13 @@ def main(scene_name="realsense_scene"):
         # Calculate camera pose
         cam_pose = wrist_pose * wrist_to_d435
         
-        # Capture from wrist camera
-        color_d435, depth_d435 = wrist_cam.get_rgb_depth()
+        # Capture from wrist camera with retry mechanism
+        try:
+            color_d435, depth_d435 = wrist_cam.get_rgb_depth()
+        except Exception as e:
+            print(f"✗ Critical error capturing frame {i+2}: {e}")
+            print("Stopping capture to prevent further issues...")
+            break
         pc_d435 = generate_pointcloud(depth_d435, wrist_cam.intrinsics)
         pc_world = cam_pose * pc_d435
         

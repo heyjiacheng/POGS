@@ -36,12 +36,13 @@ def load_camera_calibration(tf_file_path: str) -> Tuple[np.ndarray, np.ndarray]:
     return camera_position, rotation_matrix
 
 
-def create_camera_from_calibration(calibration_file: str, optimizer: Optimizer) -> Cameras:
+def create_camera_from_calibration(calibration_file: str, optimizer: Optimizer, apply_centering_adjustment: bool = True) -> Cameras:
     """Create camera from calibration file and dataset parameters.
     
     Args:
         calibration_file: Path to camera calibration file
         optimizer: POGS optimizer instance
+        apply_centering_adjustment: Whether to apply cx adjustment for centering objects
         
     Returns:
         Configured Cameras instance
@@ -70,15 +71,23 @@ def create_camera_from_calibration(calibration_file: str, optimizer: Optimizer) 
         cx, cy = 320.0, 240.0
         width, height = 640, 480
     
+    # Conditionally adjust camera center to compensate for object appearing on right side
+    if apply_centering_adjustment:
+        # Shift cx to the left to center the object
+        cx_adjusted = cx - width * 0.3  # Shift left by 30% of image width
+    else:
+        cx_adjusted = cx
+
     # Create camera
     camera = Cameras(
         camera_to_worlds=torch.from_numpy(opengl_tf[:3, :]).float()[None, :],
-        fx=fx, fy=fy, cx=cx, cy=cy, width=width, height=height
+        fx=fx, fy=fy, cx=cx_adjusted, cy=cy, width=width, height=height
     )
     
     # Scale to nerfstudio coordinates
     camera.camera_to_worlds[:, :3, 3] *= optimizer.dataset_scale
     print(f"Final camera position: {camera.camera_to_worlds[0, :3, 3]}")
+    print(f"Adjusted cx from {cx} to {cx_adjusted}")
     
     return camera
 
@@ -137,8 +146,8 @@ def create_circular_cameras(center_point: np.ndarray, ref_camera_pos: np.ndarray
         cam2world[:3, 2] = -look_dir  # negative for right-handed
         cam2world[:3, 3] = camera_pos
         
-        # Create camera by copying calibration camera approach
-        camera = create_camera_from_calibration(calibration_file, optimizer)
+        # Create camera by copying calibration camera approach (no centering adjustment for multiview)
+        camera = create_camera_from_calibration(calibration_file, optimizer, apply_centering_adjustment=False)
         
         # Update the camera-to-world transform
         camera.camera_to_worlds[0] = torch.from_numpy(cam2world[:3, :]).float()
